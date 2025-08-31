@@ -1,0 +1,44 @@
+# Analysis outputs
+output/
+results/
+*.tsv
+*.csv
+*.log
+
+# R specific
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.dockerignore
+
+# Logs
+logs/
+*.log
+
+# Data files (large files)
+*.h5ad
+*.h5Seurat
+*.rds
+*.rda
+
+# Backup files
+*.bak
+*.backup 
