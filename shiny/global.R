@@ -6,9 +6,7 @@ suppressPackageStartupMessages({
   library(bslib)
   library(shinycssloaders)
   library(msigdbr)
-  library(ggrepel)
   library(base64enc)
-  library(future)
 })
 
 # Absolute path to the DEA output root
