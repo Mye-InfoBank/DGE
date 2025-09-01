@@ -4,8 +4,8 @@ cat("
 ############################################################################################################################################################
 #           ## ###    ###                                 %%%%%%%  %%%  %%%%% %%%%%%%%%  %%%%%%   ########   #####    ####  #### ####  ###  #              #   
 #        ###    ###  #### ####  ###   #####                  %      %%%   %    %%    %% %%     %%  ##    ##    ####     ###  ##   ## ###      ###          #   
-#    ###        # #### ##  ##   ##   #     #   ########      %      %  %  %    %%%%%   %%      %%  #######    ##  ##    # ## ##   #####          ###       #   
-#      ####     #  ##  ##   ##  #   #########                %      %   %%%    %%  %    %%     %%  ##    ##  #######    #  ####   ##  ##       ###         #   
+#    ###        # #### ##  ##   ##   #     #                 %      %  %  %    %%%%%   %%      %%  #######    ##  ##    # ## ##   #####          ###       #   
+#      ####     #  ##  ##   ##  #   #########   ########     %      %   %%%    %%  %    %%     %%  ##    ##  #######    #  ####   ##  ##       ###         #   
 #          ###  #      ##    ###     ##    ##                %      %    %%    %%        %%   %%   ##   ###  #     ##   #    ##   ##   ##   ###            #   
 #               ##    ###     #        ####                %%%%%    %%    %    %%%%        %%%     #####    ###    ##  ###    #   ###    #                 #
 #                         ######                                                                                                                           #
@@ -127,7 +127,9 @@ parser$add_argument("--sample_column", nargs = "*", default = 'sample',
 parser$add_argument("--count_assay", nargs = "*", default = 'counts',
                     help = "Name of the assay with raw counts (default: counts)")   
 parser$add_argument("--remove_groups", nargs = "*", default = NULL,
-                    help = "Optional groups to remove from the category_column before analysis")                                     
+                    help = "Optional groups to remove from the category_column before analysis")    
+parser$add_argument("--remove_cell_type", nargs = "*", default = NULL,
+                    help = "Optional cell types to skip during the analysis")
 parser$add_argument("--one_vs_all", action = "store_true", default = FALSE,
                     help = "If set, perform one-vs-all comparisons instead of all pairwise comparisons")
 parser$add_argument("--output_directory", required = TRUE,
@@ -142,6 +144,7 @@ sample_column <- args$sample_column
 count_assay <- args$count_assay
 outdir <- args$output_directory
 remove_groups <- args$remove_groups
+remove_cell_types <- args$remove_cell_type
 one_vs_all <- args$one_vs_all
 
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
@@ -182,7 +185,10 @@ message("Covariates:           ", ifelse(length(args$covariates) > 0,
 message("Remove groups:        ", ifelse(length(args$remove_groups) > 0,
                                          paste(args$remove_groups, collapse = ", "),
                                          "None"))
-message("One-vs-all mode:      ", ifelse(args$one_vs_all, "Yes", "No"))                                         
+message("Remove cell types:   ", ifelse(length(remove_cell_types) > 0,
+                                         paste(remove_cell_types, collapse = ", "),
+                                         "None"))
+message("One-vs-all mode:      ", ifelse(args$one_vs_all, "Yes", "No"))
 message("Output directory:     ", args$output_directory)
 message("====================================================\n")
 
@@ -200,7 +206,7 @@ if (!is.null(remove_groups)) {
     adata[[category_column]] <- droplevels(adata[[category_column]])
   }
 }
-adata <- adata[, adata$dataset != "Devlin"]
+#adata <- adata[, adata$dataset != "Devlin"]
 
 if(count_assay %in% names(assays(adata))){
   message(paste0('Using ', count_assay, ' assay for DGE testing ...'))
@@ -224,6 +230,12 @@ celltypes <- unique(adata[[cell_type_column]])
 celltypes <- celltypes[!is.na(celltypes)]
 
 all_results <- lapply(celltypes, function(group){
+
+  if(group %in% remove_cell_types) {
+    message("Skipping ", group, ": cell type is in the remove list.")
+    return(NULL)
+  }
+
   message("\n######## Starting DGE analysis for ", group)
   
   group_obs <- obs[obs[[cell_type_column]] == group & !is.na(obs[[cell_type_column]]), ]
@@ -255,7 +267,7 @@ all_results <- lapply(celltypes, function(group){
   
   # Remove all-zero genes
   pb <- pb[which(rowSums(assays(pb)$counts) > 0), ]
-  
+
   res_list <- list()
   
   if (!one_vs_all) {
@@ -282,6 +294,11 @@ all_results <- lapply(celltypes, function(group){
     contrasts <- combn(possible_conditions, 2, simplify = FALSE)
     
     for (c in contrasts) {
+
+      # save additional information to a file on pseudobulk samples that were used for DESeq2 test in this contrast
+      pb_samples_file <- file.path(outdir, group, paste0("DESeq2_pseudobulk_samples_", contrast_name, ".txt"))
+      writeLines(colnames(pb), pb_samples_file)
+
       contrast_vector <- c(category_column, c[1], c[2])
       contrast_name <- paste(c[1], "_vs_", c[2], sep = "")
       
@@ -340,10 +357,16 @@ all_results <- lapply(celltypes, function(group){
   
   out_html <- file.path(group_dir, paste0("volcano.html"))
   save_volcano(res_celltype, out_html)
+
+  # save all parameter values in a text file
+  params_file <- file.path(group_dir, "DESeq2_parameters.txt")
+  writeLines(capture.output(args), params_file)
+  # also include info on adata structure and pseudobulks
+  writeLines(capture.output(adata), params_file)
+  writeLines(capture.output(pb), params_file)
   
   return(res_celltype)
 })
-
 
 # Save combined results
 combined <- bind_rows(all_results)
