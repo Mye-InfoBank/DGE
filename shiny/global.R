@@ -396,7 +396,7 @@ make_overview_heatmap <- function(overview_data) {
     
     data.frame(
       celltype = ct,
-      contrast = data$contrasts,
+      contrast = na.omit(data$contrasts),
       sig_genes = data$sig_genes_by_contrast,
       stringsAsFactors = FALSE
     )

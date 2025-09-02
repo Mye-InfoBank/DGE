@@ -2,6 +2,74 @@ server <- function(input, output, session) {
   # Use reactive value for selected cell type instead of hidden input
   selected_celltype <- reactiveVal("")
   
+  # Load pseudobulk metadata for selected celltype
+  pseudobulk_metadata <- reactive({
+    req(input$result_dir, selected_celltype(), selected_result_path())
+    metadata_file <- file.path(selected_result_path(), selected_celltype(), "DESeq2_pseudobulk_metadata.txt")
+    if (file.exists(metadata_file)) {
+      data <- read.table(metadata_file, header = TRUE, sep = "\t", check.names = FALSE)
+      return(data)
+    }
+    return(NULL)
+  })
+  
+  celltype_params <- reactive({
+    req(input$result_dir, selected_celltype(), selected_result_path())
+    params_file <- file.path(selected_result_path(), selected_celltype(), "DESeq2_run_parameters.tsv")
+    if (file.exists(params_file)) {
+      data <- read.table(params_file, header = TRUE, sep = "\t", check.names = FALSE)
+      return(data)
+    }
+    return(NULL)
+  })
+
+  # Get summary statistics for pseudobulk samples
+  pseudobulk_stats_reactive <- reactive({
+    req(pseudobulk_metadata(), input$contrast, celltype_params())
+    meta <- pseudobulk_metadata()
+    params_df <- celltype_params()
+    
+    # Split contrast name to get groups (assuming format "A_vs_B" or "A_vs_rest")
+    groups <- strsplit(input$contrast, "_vs_")[[1]]
+    group1 <- groups[1]
+    group2 <- groups[2]
+    
+    # Initialize variables
+    group1_samples <- NULL
+    group2_samples <- NULL
+    
+    # For one-vs-all mode 
+    if (params_df$one_vs_all) {
+      condition_col <- params_df$category_column
+      meta$tmp2 <- ifelse(meta[[condition_col]] == group1, group1, 'rest')
+      group1_samples <- meta[meta$tmp2 == group1, ]
+      group2_samples <- meta[meta$tmp2 == "rest", ]
+      
+    } else {
+      # For pairwise mode - use the actual condition column from parameters
+      condition_col <- params_df$category_column
+      
+      if (!is.null(condition_col) && condition_col %in% names(meta)) {
+        group1_samples <- meta[meta[[condition_col]] == group1, ]
+        group2_samples <- meta[meta[[condition_col]] == group2, ]
+      }
+    }
+    
+    # If we couldn't identify groups, return NULL
+    if (is.null(group1_samples) || is.null(group2_samples) || 
+        nrow(group1_samples) == 0 || nrow(group2_samples) == 0) {
+      return(NULL)
+    }
+    
+    list(
+      group1_name = group1,
+      group2_name = group2,
+      group1_n_samples = nrow(group1_samples),
+      group2_n_samples = nrow(group2_samples),
+      group1_n_cells_per_sample = group1_samples$ncells,
+      group2_n_cells_per_sample = group2_samples$ncells
+    )
+  })
   # Add a counter for cell type clicks to handle repeated clicks
   celltype_click_counter <- reactiveVal(0)
   
@@ -43,7 +111,7 @@ server <- function(input, output, session) {
     selected_celltype("")
     celltype_click_counter(0)
   })
-  
+
   # Overview data - with loading state and progress bar
   overview_data <- reactive({
     if (is.null(input$result_dir) || !nzchar(input$result_dir)) return(list())
@@ -65,7 +133,8 @@ server <- function(input, output, session) {
       res
     })
   })
-  
+
+ 
   # Parse DESeq2 parameter settings from the start of the latest log
   deseq2_params <- reactive({
     p <- latest_log_paths()$deseq2
@@ -126,10 +195,6 @@ server <- function(input, output, session) {
         )
       ),
       div(class = "card-like",
-        h4("DESeq2 Parameters (from latest log)"),
-        uiOutput("deseq2_params_ui")
-      ),
-      div(class = "card-like",
         h4("Select Cell Type for Detailed Analysis"),
         uiOutput("celltype_selection_cards")
       ),
@@ -144,6 +209,10 @@ server <- function(input, output, session) {
       div(class = "card-like",
         h4("Cell Type Summary"),
         DTOutput("overview_summary_table") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB")
+      ),
+      div(class = "card-like",
+        h4("DESeq2 Parameters (from latest log)"),
+        uiOutput("deseq2_params_ui")
       )
     )
   })
@@ -298,15 +367,98 @@ server <- function(input, output, session) {
     tags$p("Using file:", tags$code(files$deg_tsv[1]))
   })
   
-  # Contrast selector based on available contrasts in the DE table
+  # Contrast selector based on available contrasts in the DE table (GLOBAL for all panels)
   output$contrast_selector <- renderUI({
     df <- deg_df()
     if (is.null(df) || !"contrast" %in% names(df)) return(NULL)
     contrasts <- sort(unique(df$contrast))
     if (length(contrasts) == 0) return(NULL)
-    selectInput("contrast", "Select contrast", choices = contrasts, selected = contrasts[1])
+    
+    div(class = "card-like",
+      h4("Select Contrast"),
+      selectInput("contrast", "Choose contrast for analysis", choices = contrasts, selected = contrasts[1])
+    )
   })
-  
+
+  # Render pseudobulk statistics
+  output$pseudobulk_stats <- renderUI({
+    stats <- pseudobulk_stats_reactive()
+    if (is.null(stats)) return(NULL)
+    
+    # Create condition info text
+    condition_info <- if (!is.null(stats$condition_column_used) && stats$condition_column_used != "Unknown") {
+      div(style = "margin-bottom: 10px; font-size: 12px; color: #6c757d;",
+        paste("Based on condition column:", stats$condition_column_used))
+    } else {
+      div(style = "margin-bottom: 10px; font-size: 12px; color: #6c757d;",
+        "One-vs-all comparison mode")
+    }
+    
+    div(
+      class = "card-like pseudobulk-stats",
+      h4("Sample Information"),
+      condition_info,
+      div(
+        style = "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;",
+        
+        # Group 1 stats (left)
+        div(
+          class = "pseudobulk-box",
+          h5(stats$group1_name, style = "color: #2E86AB;"),
+          div(
+            div(class = "pseudobulk-stat",
+              div(class="pseudobulk-label", "Number of Samples"),
+              div(class="pseudobulk-value", stats$group1_n_samples)
+            ),
+            div(class = "pseudobulk-stat",
+              div(class="pseudobulk-label", "Total Cells"),
+              div(class="pseudobulk-value", format(sum(stats$group1_n_cells_per_sample), big.mark=","))
+            ),
+            div(class = "pseudobulk-stat",
+              div(class="pseudobulk-label", "Mean Cells per Sample"),
+              div(class="pseudobulk-value", format(round(mean(stats$group1_n_cells_per_sample)), big.mark=","))
+            ),
+            div(class = "pseudobulk-stat",
+              div(class="pseudobulk-label", "Median Cells per Sample"),
+              div(class="pseudobulk-value", format(round(median(stats$group1_n_cells_per_sample)), big.mark=","))
+            )
+          )
+        ),
+        
+        # Density plot (center)
+        div(
+          style = "display: flex; flex-direction: column; justify-content: center;",
+          h5("Cell Count Distribution", style = "text-align: center; margin-bottom: 10px;"),
+          plotOutput("pseudobulk_density_plot", height = "300px")
+        ),
+        
+        # Group 2 stats (right)
+        div(
+          class = "pseudobulk-box",
+          h5(stats$group2_name, style = "color: #A23B72;"),
+          div(
+            div(class = "pseudobulk-stat",
+              div(class="pseudobulk-label", "Number of Samples"),
+              div(class="pseudobulk-value", stats$group2_n_samples)
+            ),
+            div(class = "pseudobulk-stat",
+                div(class="pseudobulk-label", "Total Cells"),
+                div(class="pseudobulk-value", format(sum(stats$group2_n_cells_per_sample), big.mark=","))
+            ),
+            div(class = "pseudobulk-stat",
+                div(class="pseudobulk-label", "Mean Cells per Sample"),
+                div(class="pseudobulk-value", format(round(mean(stats$group2_n_cells_per_sample)), big.mark=","))
+            ),
+            div(class = "pseudobulk-stat",
+                div(class="pseudobulk-label", "Median Cells per Sample"),
+                div(class="pseudobulk-value", format(round(median(stats$group2_n_cells_per_sample)), big.mark=","))
+            )
+          )
+        )
+      )
+    )
+  })
+
   filtered_deg_df <- reactive({
     df <- deg_df()
     if (is.null(df)) return(NULL)
@@ -334,6 +486,38 @@ server <- function(input, output, session) {
     output$vb_sig_genes <- renderText(format(sig_genes, big.mark = ","))
     output$vb_sig_paths <- renderText(format(sig_paths, big.mark = ","))
   })
+  
+  # Density plot for pseudobulk cell distribution
+  output$pseudobulk_density_plot <- renderPlot({
+    stats <- pseudobulk_stats_reactive()
+    if (is.null(stats)) return(NULL)
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      group = c(rep(stats$group1_name, length(stats$group1_n_cells_per_sample)),
+                rep(stats$group2_name, length(stats$group2_n_cells_per_sample))),
+      cells_per_sample = c(stats$group1_n_cells_per_sample, stats$group2_n_cells_per_sample)
+    )
+    
+    # Create density plot
+    library(ggplot2)
+    ggplot(plot_data, aes(x = cells_per_sample, fill = group)) +
+      geom_density(alpha = 0.7) +
+      scale_fill_manual(values = c("#2E86AB", "#A23B72")) +
+      labs(
+        x = "Cells per Sample",
+        y = "Density",
+        fill = "Group"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(size = 10)
+      ) +
+      scale_x_continuous(labels = scales::comma_format())
+  }, res = 110)
   
   output$volcano_plot <- renderPlot({
     hl <- input$highlight_genes
@@ -589,6 +773,10 @@ server <- function(input, output, session) {
           actionButton("back_to_overview", "← Back to Overview", class = "btn btn-outline-secondary")
         )
       ),
+      # Global contrast selector for all panels
+      uiOutput("contrast_selector"),
+      # Pseudobulk stats (uses the global contrast selection)
+      uiOutput("pseudobulk_stats"),
       tabsetPanel(type = "pills",
         tabPanel(
           title = "Overview",
@@ -606,7 +794,6 @@ server <- function(input, output, session) {
           div(class = "card-like",
             h4("Differential expression"),
             uiOutput("deg_info"),
-            uiOutput("contrast_selector"),
             fluidRow(
               column(6,
                 selectizeInput(

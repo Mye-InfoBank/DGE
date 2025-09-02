@@ -15,6 +15,14 @@ ui <- page_fluid(
     .celltype-card:hover { transform: translateY(-1px); box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
     .celltype-card.selected { border-color: #2E86AB; }
     .celltype-chip { display:inline-block; padding: 2px 6px; border-radius: 999px; font-size: 11px; color: #fff; margin-left: 6px; }
+
+    /* Pseudobulk stats styling */
+    .pseudobulk-stats { margin: 15px 0; }
+    .pseudobulk-box { background: #ffffff; border: 1px solid #e3e6ea; border-radius: 8px; padding: 15px; }
+    .pseudobulk-box h5 { color: #2E86AB; margin-bottom: 12px; text-align: center; }
+    .pseudobulk-stat { margin: 8px 0; }
+    .pseudobulk-label { font-size: 12px; color: #6c757d; }
+    .pseudobulk-value { font-size: 16px; font-weight: 600; }
   '))),
   layout_sidebar(
     sidebar = sidebar(
