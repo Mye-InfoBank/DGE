@@ -295,10 +295,6 @@ all_results <- lapply(celltypes, function(group){
     
     for (c in contrasts) {
 
-      # save additional information to a file on pseudobulk samples that were used for DESeq2 test in this contrast
-      pb_samples_file <- file.path(outdir, group, paste0("DESeq2_pseudobulk_samples_", contrast_name, ".txt"))
-      writeLines(colnames(pb), pb_samples_file)
-
       contrast_vector <- c(category_column, c[1], c[2])
       contrast_name <- paste(c[1], "_vs_", c[2], sep = "")
       
@@ -358,13 +354,20 @@ all_results <- lapply(celltypes, function(group){
   out_html <- file.path(group_dir, paste0("volcano.html"))
   save_volcano(res_celltype, out_html)
 
-  # save all parameter values in a text file
-  params_file <- file.path(group_dir, "DESeq2_parameters.txt")
-  writeLines(capture.output(args), params_file)
-  # also include info on adata structure and pseudobulks
-  writeLines(capture.output(adata), params_file)
-  writeLines(capture.output(pb), params_file)
-  
+  # save metadata of pseudobulk object as file
+  metadata_file <- file.path(group_dir, "DESeq2_pseudobulk_metadata.txt")
+  write.table(colData(pb), metadata_file, sep = "\t", quote = FALSE, row.names = TRUE)
+
+  # add parameter info of run as table to output
+  param_file <- file.path(group_dir, "DESeq2_run_parameters.tsv")
+  params_df <- data.frame(
+    'celltype' = group,
+    'pb_columns' = paste(pseudobulk_group_cols, collapse = ", "),
+    'category_column' = category_column,
+    'one_vs_all' = one_vs_all
+  )
+  write.table(params_df, param_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
   return(res_celltype)
 })
 
