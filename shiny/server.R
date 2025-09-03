@@ -394,6 +394,27 @@ server <- function(input, output, session) {
         "One-vs-all comparison mode")
     }
     
+    # Create warning icons for low sample size
+    group1_warning <- if (stats$group1_n_samples < 7) {
+      tags$span(
+        style = "margin-left: 8px; color: #FF6B35; cursor: help;",
+        title = paste0("Warning: Low sample size (n=", stats$group1_n_samples, "). ",
+                      "Differential expression results may be less reliable with fewer than 7 samples per group. ",
+                      "Consider interpreting results with caution."),
+        "⚠️"
+      )
+    } else NULL
+    
+    group2_warning <- if (stats$group2_n_samples < 7) {
+      tags$span(
+        style = "margin-left: 8px; color: #FF6B35; cursor: help;",
+        title = paste0("Warning: Low sample size (n=", stats$group2_n_samples, "). ",
+                      "Differential expression results may be less reliable with fewer than 7 samples per group. ",
+                      "Consider interpreting results with caution."),
+        "⚠️"
+      )
+    } else NULL
+    
     div(
       class = "card-like pseudobulk-stats",
       h4("Sample Information"),
@@ -404,7 +425,12 @@ server <- function(input, output, session) {
         # Group 1 stats (left)
         div(
           class = "pseudobulk-box",
-          h5(stats$group1_name, style = "color: #2E86AB;"),
+          h5(
+            tagList(
+              span(stats$group1_name, style = "color: #2E86AB;"),
+              group1_warning
+            )
+          ),
           div(
             div(class = "pseudobulk-stat",
               div(class="pseudobulk-label", "Number of Samples"),
@@ -435,7 +461,12 @@ server <- function(input, output, session) {
         # Group 2 stats (right)
         div(
           class = "pseudobulk-box",
-          h5(stats$group2_name, style = "color: #A23B72;"),
+          h5(
+            tagList(
+              span(stats$group2_name, style = "color: #A23B72;"),
+              group2_warning
+            )
+          ),
           div(
             div(class = "pseudobulk-stat",
               div(class="pseudobulk-label", "Number of Samples"),
