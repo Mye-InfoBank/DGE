@@ -4,8 +4,8 @@ server <- function(input, output, session) {
   
   # Load pseudobulk metadata for selected celltype
   pseudobulk_metadata <- reactive({
-    req(input$result_dir, selected_celltype(), selected_result_path())
-    metadata_file <- file.path(selected_result_path(), selected_celltype(), "DESeq2_pseudobulk_metadata.txt")
+    req(input$result_dir, selected_celltype(), selected_celltype_path())
+    metadata_file <- file.path(selected_celltype_path(), "DESeq2_pseudobulk_metadata.txt")
     if (file.exists(metadata_file)) {
       data <- read.table(metadata_file, header = TRUE, sep = "\t", check.names = FALSE)
       return(data)
@@ -14,8 +14,8 @@ server <- function(input, output, session) {
   })
   
   celltype_params <- reactive({
-    req(input$result_dir, selected_celltype(), selected_result_path())
-    params_file <- file.path(selected_result_path(), selected_celltype(), "DESeq2_run_parameters.tsv")
+    req(input$result_dir, selected_celltype(), selected_celltype_path())
+    params_file <- file.path(selected_celltype_path(), "DESeq2_run_parameters.tsv")
     if (file.exists(params_file)) {
       data <- read.table(params_file, header = TRUE, sep = "\t", check.names = FALSE)
       return(data)
@@ -311,10 +311,12 @@ server <- function(input, output, session) {
       br <- if (!is.null(ct_data$color)) color_alpha(ct_data$color, 0.35) else "#e3e6ea"
       pct <- if (max_total > 0) max(0, min(1, ct_data$total_sig_genes / max_total)) else 0
       bar_w <- sprintf("%.1f%%", pct * 100)
+      # Properly escape cell type name for JavaScript
+      ct_escaped <- gsub("'", "\\\\'", ct, fixed = TRUE)
       tags$div(
         class = "card-like celltype-card",
         style = sprintf("margin-bottom: 6px; margin-right: 6px; display: inline-block; width: 200px; vertical-align: top; background:%s; border-color:%s; padding:8px;", bg, br),
-        onclick = sprintf("Shiny.setInputValue('celltype_click', '%s', {priority: 'event'})", ct),
+        onclick = sprintf("Shiny.setInputValue('celltype_click', '%s', {priority: 'event'})", ct_escaped),
         tags$h5(style = "margin: 0 0 6px 0; font-size: 14px;", ct),
         tags$div(style = "font-size: 11px; line-height: 1.25; margin:0;",
           tags$div(tags$b("Contrasts:"), length(ct_data$contrasts)),

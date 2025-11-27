@@ -58,6 +58,33 @@ The application expects DEA output data to be mounted at `/data` inside the cont
 
 You can modify the volume mapping in `docker-compose.yml` or the `docker run` command to point to your actual data directory.
 
+#### Supported Directory Structures
+
+The application supports two directory structures:
+
+1. **Flat structure** (cell types directly under result directory):
+   ```
+   output/
+     ibd_condition/
+       B cell/
+       T cell/
+       ...
+   ```
+
+2. **Nested structure** (subfolders containing cell types):
+   ```
+   output/
+     ibd_region_inflammation/
+       Colon/
+         B cell/
+         T cell/
+       Cecum/
+         B cell/
+         ...
+   ```
+
+The app automatically detects the structure and displays cell types appropriately. For nested structures, cell types are shown as "Subfolder/Cell Type" (e.g., "Colon/B cell").
+
 ### Environment Variables
 
 You can customize the following environment variables:

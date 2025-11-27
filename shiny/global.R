@@ -89,7 +89,41 @@ list_celltype_dirs <- function(result_basename) {
   if (!dir.exists(base_dir)) return(character())
   entries <- list.files(base_dir, full.names = TRUE, recursive = FALSE, include.dirs = TRUE)
   dirs <- entries[file.info(entries)$isdir]
-  basename(dirs)
+  
+  # Check if this might have subfolders with cell types (e.g., regions with cell types)
+  # Look for TSV files indicating DESeq2 results at the cell type level
+  celltypes <- character()
+  for (dir in dirs) {
+    subdir_name <- basename(dir)
+    
+    # Check if subdirectories exist
+    sub_entries <- list.files(dir, full.names = TRUE, recursive = FALSE, include.dirs = TRUE)
+    sub_dirs <- sub_entries[file.info(sub_entries)$isdir]
+    
+    # If subdirectories exist, check if they contain results (nested structure)
+    if (length(sub_dirs) > 0) {
+      found_nested <- FALSE
+      for (sub_dir in sub_dirs) {
+        sub_has_results <- length(list.files(sub_dir, pattern = "^DESeq2.*\\.tsv$", recursive = FALSE)) > 0
+        if (sub_has_results) {
+          # Include as "subfolder/celltype"
+          celltypes <- c(celltypes, file.path(subdir_name, basename(sub_dir)))
+          found_nested <- TRUE
+        }
+      }
+      # If we found nested cell types, don't add the parent directory
+      if (found_nested) next
+    }
+    
+    # If no nested structure found, check if this directory itself contains results (flat structure)
+    has_results <- length(list.files(dir, pattern = "^DESeq2.*\\.tsv$", recursive = FALSE)) > 0
+    if (has_results) {
+      # This is a cell type directory (flat structure)
+      celltypes <- c(celltypes, subdir_name)
+    }
+  }
+  
+  return(celltypes)
 }
 
 resolve_selected_dir <- function(selected_basename) {
@@ -327,7 +361,7 @@ scan_result_overview <- function(result_basename, progress = NULL) {
   for (i in seq_along(celltypes)) {
     ct <- celltypes[i]
     if (!is.null(progress)) progress(value = (i - 1) / n, detail = paste0("Reading ", ct, " (", i, "/", n, ")"))
-    ct_dir <- file.path(base_dir, ct)
+    ct_dir <- file.path(base_dir, ct)  # This now handles paths like "Colon/B cell"
     files <- find_celltype_files(ct_dir)
     
     # Read DEG data - full for accurate counts
@@ -366,10 +400,15 @@ scan_result_overview <- function(result_basename, progress = NULL) {
       setNames(integer(length(comparisons)), comparisons)
     }
     
+    # For display purposes, use the full path as celltype name
+    # Extract just the cell type name for major class detection
+    ct_display <- ct
+    ct_for_classification <- basename(ct)
+    
     res_list[[i]] <- list(
-      celltype = ct,
-      major_class = major_celltype_of(ct),
-      color = color_for_major_celltype(ct),
+      celltype = ct_display,
+      major_class = major_celltype_of(ct_for_classification),
+      color = color_for_major_celltype(ct_for_classification),
       contrasts = contrasts,
       comparisons = comparisons,
       sig_genes_by_contrast = sig_genes_by_contrast,
