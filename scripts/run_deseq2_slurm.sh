@@ -5,7 +5,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=6
-#SBATCH --mem=100G
+#SBATCH --mem=150G
 #SBATCH --partition=exbio-cpu
 #SBATCH --array=1-4
 

@@ -132,6 +132,10 @@ parser$add_argument("--remove_cell_type", nargs = "*", default = NULL,
                     help = "Optional cell types to skip during the analysis")
 parser$add_argument("--one_vs_all", action = "store_true", default = FALSE,
                     help = "If set, perform one-vs-all comparisons instead of all pairwise comparisons")
+parser$add_argument("--split_column", default = NULL,
+                    help = "Optional column to split analysis by (e.g., 'Disease location' for region-specific analyses)")
+parser$add_argument("--split_groups", nargs = "*", default = NULL,
+                    help = "Optional groups within split_column to keep (if not specified, all groups are analyzed). Others are excluded.")
 parser$add_argument("--output_directory", required = TRUE,
                     help = "Directory to save results")
 
@@ -146,6 +150,8 @@ outdir <- args$output_directory
 remove_groups <- args$remove_groups
 remove_cell_types <- args$remove_cell_type
 one_vs_all <- args$one_vs_all
+split_column <- args$split_column
+split_groups <- args$split_groups
 
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
@@ -185,9 +191,15 @@ message("Covariates:           ", ifelse(length(args$covariates) > 0,
 message("Remove groups:        ", ifelse(length(args$remove_groups) > 0,
                                          paste(args$remove_groups, collapse = ", "),
                                          "None"))
-message("Remove cell types:   ", ifelse(length(remove_cell_types) > 0,
+message("Remove cell types:    ", ifelse(length(remove_cell_types) > 0,
                                          paste(remove_cell_types, collapse = ", "),
                                          "None"))
+message("Split column:         ", ifelse(!is.null(split_column),
+                                         split_column,
+                                         "None"))
+message("Split groups (keep):  ", ifelse(!is.null(split_groups),
+                                         paste(split_groups, collapse = ", "),
+                                         "All groups"))
 message("One-vs-all mode:      ", ifelse(args$one_vs_all, "Yes", "No"))
 message("Output directory:     ", args$output_directory)
 message("====================================================\n")
@@ -206,177 +218,235 @@ if (!is.null(remove_groups)) {
     adata[[category_column]] <- droplevels(adata[[category_column]])
   }
 }
-#adata <- adata[, adata$dataset != "Devlin"]
 
-if(count_assay %in% names(assays(adata))){
-  message(paste0('Using ', count_assay, ' assay for DGE testing ...'))
-  if(count_assay != 'counts'){
-      assays(adata)$counts <- assays(adata)[[count_assay]]
-  }
-}
+# NEW: Handle split_column with optional group filtering
+split_groups_list <- list(list(adata = adata, name = "all"))
 
-pseudobulk_group_cols <- c(category_column, cell_type_column, sample_column)
-if (!is.null(covariates)) {
-  pseudobulk_group_cols <- c(pseudobulk_group_cols, covariates)
-}
-pseudobulk_group_cols <- unlist(pseudobulk_group_cols)
-min_cells_in_group <- 3
-print(pseudobulk_group_cols)
-
-obs <- colData(adata) |> data.frame(check.names = F, row.names = colnames(adata)) 
-print(unique(obs[[cell_type_column]]))
-
-celltypes <- unique(adata[[cell_type_column]])
-celltypes <- celltypes[!is.na(celltypes)]
-
-all_results <- lapply(celltypes, function(group){
-
-  if(group %in% remove_cell_types) {
-    message("Skipping ", group, ": cell type is in the remove list.")
-    return(NULL)
-  }
-
-  message("\n######## Starting DGE analysis for ", group)
+if (!is.null(split_column)) {
+  all_split_groups <- unique(adata[[split_column]])
+  all_split_groups <- all_split_groups[!is.na(all_split_groups)]
   
-  group_obs <- obs[obs[[cell_type_column]] == group & !is.na(obs[[cell_type_column]]), ]
-  if (nrow(group_obs) < 4) {
-    message("Skipping ", group, ": only ", nrow(group_obs), " cell(s).")
-    return(NULL)
-  }
+  message("Split column '", split_column, "' found with groups: ", 
+          paste(all_split_groups, collapse = ", "))
   
-  # Subset data
-  sce_sub <- adata[, !is.na(adata[[cell_type_column]]) & adata[[cell_type_column]] == group]
-  
-  # Aggregate to pseudobulk
-  pb <- scuttle::aggregateAcrossCells(
-    sce_sub,
-    ids = group_obs[, pseudobulk_group_cols, drop = FALSE] |> 
-      unite("pb_id", everything(), remove = FALSE) |> pull("pb_id"),
-    use.assay.type = "counts",
-    statistics = "sum",
-    store.number = "ncells"
-  )
-  colData(pb)$log2_cells_pseudobulk <- log2(as.numeric(colData(pb)$ncells))
-  
-  # Filter by min cells
-  pb <- pb[, colData(pb)$ncells >= min_cells_in_group]
-  if (ncol(pb) < 4) {
-    message("Skipping ", group, ": only ", ncol(pb), " pseudobulk sample(s) after filtering.")
-    return(NULL)
-  }
-  
-  # Remove all-zero genes
-  pb <- pb[which(rowSums(assays(pb)$counts) > 0), ]
-
-  res_list <- list()
-  
-  if (!one_vs_all) {
-    # -------- Pairwise mode (default) -------- #
-    # Build design
-    design_vars <- c("log2_cells_pseudobulk", category_column)
-    if (!is.null(covariates)) {
-      design_vars <- c(covariates, "log2_cells_pseudobulk", category_column)
-    }
-    formula_str <- as.formula(paste0("~", paste(design_vars, collapse = " + ")))
+  # Filter by split_groups if specified
+  if (!is.null(split_groups)) {
+    groups_to_analyze <- intersect(split_groups, all_split_groups)
+    groups_removed <- setdiff(all_split_groups, split_groups)
     
-    diag <- check_deseq_design(pb, formula_str)
-    if (!diag$ok) {
-      message("❌ Skipping ", group, ": ", diag$reason)
+    if (length(groups_removed) > 0) {
+      message("Excluding from split column: ", paste(groups_removed, collapse = ", "))
+    }
+  } else {
+    groups_to_analyze <- all_split_groups
+  }
+  
+  message("Analyzing ", length(groups_to_analyze), " group(s): ", 
+          paste(groups_to_analyze, collapse = ", "))
+  
+  split_groups_list <- lapply(groups_to_analyze, function(group_name) {
+    adata_split <- adata[, adata[[split_column]] == group_name]
+    list(adata = adata_split, name = group_name)
+  })
+}
+
+# Main analysis loop over split groups
+for (split_data in split_groups_list) {
+  adata_current <- split_data$adata
+  split_name <- split_data$name
+  
+  if (split_name != "all") {
+    message("\n\n========== Processing split group: ", split_name, " ==========\n")
+  }
+  
+  # Create output subdirectory for this split
+  if (split_name != "all") {
+    outdir_current <- file.path(outdir, gsub(pattern = ' ', '_', split_name))
+  } else {
+    outdir_current <- outdir
+  }
+  
+  dir.create(outdir_current, showWarnings = FALSE, recursive = TRUE)
+
+  if(count_assay %in% names(assays(adata_current))){
+    message(paste0('Using ', count_assay, ' assay for DGE testing ...'))
+    if(count_assay != 'counts'){
+        assays(adata_current)$counts <- assays(adata_current)[[count_assay]]
+    }
+  }
+  
+  pseudobulk_group_cols <- c(category_column, cell_type_column, sample_column)
+  if (!is.null(covariates)) {
+    pseudobulk_group_cols <- c(pseudobulk_group_cols, covariates)
+  }
+  pseudobulk_group_cols <- unlist(pseudobulk_group_cols)
+  min_cells_in_group <- 3
+  print(pseudobulk_group_cols)
+  
+  obs <- colData(adata_current) |> data.frame(check.names = F, row.names = colnames(adata_current)) 
+  print(unique(obs[[cell_type_column]]))
+  
+  celltypes <- unique(adata_current[[cell_type_column]])
+  celltypes <- celltypes[!is.na(celltypes)]
+  
+  all_results <- lapply(celltypes, function(group){
+  
+    if(group %in% remove_cell_types) {
+      message("Skipping ", group, ": cell type is in the remove list.")
+      return(NULL)
+    }
+  
+    message("\n######## Starting DGE analysis for ", group)
+    
+    group_obs <- obs[obs[[cell_type_column]] == group & !is.na(obs[[cell_type_column]]), ]
+    if (nrow(group_obs) < 4) {
+      message("Skipping ", group, ": only ", nrow(group_obs), " cell(s).")
       return(NULL)
     }
     
-    dds <- diag$dds
-    message("Running DESeq for ", group, " with ", ncol(dds), " samples.")
-    dds <- estimateSizeFactors(dds)
-    dds <- DESeq2::DESeq(dds, parallel = TRUE)
+    # Subset data
+    sce_sub <- adata_current[, !is.na(adata_current[[cell_type_column]]) & adata_current[[cell_type_column]] == group]
     
-    possible_conditions <- levels(dds[[category_column]])
-    contrasts <- combn(possible_conditions, 2, simplify = FALSE)
+    # Aggregate to pseudobulk
+    pb <- scuttle::aggregateAcrossCells(
+      sce_sub,
+      ids = group_obs[, pseudobulk_group_cols, drop = FALSE] |> 
+        unite("pb_id", everything(), remove = FALSE) |> pull("pb_id"),
+      use.assay.type = "counts",
+      statistics = "sum",
+      store.number = "ncells"
+    )
+    colData(pb)$log2_cells_pseudobulk <- log2(as.numeric(colData(pb)$ncells))
     
-    for (c in contrasts) {
-
-      contrast_vector <- c(category_column, c[1], c[2])
-      contrast_name <- paste(c[1], "_vs_", c[2], sep = "")
-      
-      res <- results(dds, contrast = contrast_vector)
-      res_df <- as.data.frame(res)
-      res_df$contrast <- contrast_name
-      res_df$gene <- rownames(res_df)
-      res_df$celltype <- group
-      res_list[[contrast_name]] <- res_df
+    # Filter by min cells
+    pb <- pb[, colData(pb)$ncells >= min_cells_in_group]
+    if (ncol(pb) < 4) {
+      message("Skipping ", group, ": only ", ncol(pb), " pseudobulk sample(s) after filtering.")
+      return(NULL)
     }
-  } else {
-    # -------- One-vs-all mode -------- #
-    possible_conditions <- levels(pb[[category_column]])
     
-    for (cond in possible_conditions) {
-      message("One-vs-all: ", cond, " vs rest")
-      
-      # create new 2-level factor
-      colData(pb)$tmp <- ifelse(colData(pb)[[category_column]] == cond, cond, "other")
-      pb$tmp <- factor(pb$tmp)
-      
-      # build new design
-      design_vars_ova <- c("log2_cells_pseudobulk", "tmp")
+    # Remove all-zero genes
+    pb <- pb[which(rowSums(assays(pb)$counts) > 0), ]
+  
+    res_list <- list()
+    
+    if (!one_vs_all) {
+      # -------- Pairwise mode (default) -------- #
+      # Build design
+      design_vars <- c("log2_cells_pseudobulk", category_column)
       if (!is.null(covariates)) {
-        design_vars_ova <- c(covariates, "log2_cells_pseudobulk", "tmp")
+        design_vars <- c(covariates, "log2_cells_pseudobulk", category_column)
       }
-      formula_ova <- as.formula(paste0("~", paste(design_vars_ova, collapse = " + ")))
+      formula_str <- as.formula(paste0("~", paste(design_vars, collapse = " + ")))
       
-      diag_ova <- check_deseq_design(pb, formula_ova)
-      if (!diag_ova$ok) {
-        message("❌ Skipping one-vs-all for ", cond, ": ", diag_ova$reason)
-        next
+      diag <- check_deseq_design(pb, formula_str)
+      if (!diag$ok) {
+        message("❌ Skipping ", group, ": ", diag$reason)
+        return(NULL)
       }
       
-      dds_ova <- diag_ova$dds
-      dds_ova <- estimateSizeFactors(dds_ova)
-      dds_ova <- DESeq2::DESeq(dds_ova, parallel = TRUE)
+      dds <- diag$dds
+      message("Running DESeq for ", group, " with ", ncol(dds), " samples.")
+      dds <- estimateSizeFactors(dds)
+      dds <- DESeq2::DESeq(dds, parallel = TRUE)
       
-      res <- results(dds_ova, contrast = c("tmp", cond, "other"))
-      res_df <- as.data.frame(res)
-      res_df$contrast <- paste0(cond, "_vs_rest")
-      res_df$gene <- rownames(res_df)
-      res_df$celltype <- group
-      res_list[[paste0(cond, "_vs_rest")]] <- res_df
+      possible_conditions <- levels(dds[[category_column]])
+      contrasts <- combn(possible_conditions, 2, simplify = FALSE)
+      
+      for (c in contrasts) {
+  
+        contrast_vector <- c(category_column, c[1], c[2])
+        contrast_name <- paste(c[1], "_vs_", c[2], sep = "")
+        
+        res <- results(dds, contrast = contrast_vector)
+        res_df <- as.data.frame(res)
+        res_df$contrast <- contrast_name
+        res_df$gene <- rownames(res_df)
+        res_df$celltype <- group
+        res_list[[contrast_name]] <- res_df
+      }
+    } else {
+      # -------- One-vs-all mode -------- #
+      possible_conditions <- levels(pb[[category_column]])
+      
+      for (cond in possible_conditions) {
+        message("One-vs-all: ", cond, " vs rest")
+        
+        # create new 2-level factor
+        colData(pb)$tmp <- ifelse(colData(pb)[[category_column]] == cond, cond, "other")
+        pb$tmp <- factor(pb$tmp)
+        
+        # build new design
+        design_vars_ova <- c("log2_cells_pseudobulk", "tmp")
+        if (!is.null(covariates)) {
+          design_vars_ova <- c(covariates, "log2_cells_pseudobulk", "tmp")
+        }
+        formula_ova <- as.formula(paste0("~", paste(design_vars_ova, collapse = " + ")))
+        
+        diag_ova <- check_deseq_design(pb, formula_ova)
+        if (!diag_ova$ok) {
+          message("❌ Skipping one-vs-all for ", cond, ": ", diag_ova$reason)
+          next
+        }
+        
+        dds_ova <- diag_ova$dds
+        dds_ova <- estimateSizeFactors(dds_ova)
+        dds_ova <- DESeq2::DESeq(dds_ova, parallel = TRUE)
+        
+        res <- results(dds_ova, contrast = c("tmp", cond, "other"))
+        res_df <- as.data.frame(res)
+        res_df$contrast <- paste0(cond, "_vs_rest")
+        res_df$gene <- rownames(res_df)
+        res_df$celltype <- group
+        res_list[[paste0(cond, "_vs_rest")]] <- res_df
+      }
     }
+    
+    res_celltype <- bind_rows(res_list)
+    
+    # Save per-celltype results
+    group_dir <- file.path(outdir_current, group)
+    dir.create(group_dir, showWarnings = FALSE, recursive = TRUE)
+    
+    out_tsv <- file.path(group_dir, paste0("DESeq2_results.tsv"))
+    write.table(res_celltype, out_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
+    
+    out_html <- file.path(group_dir, paste0("volcano.html"))
+    save_volcano(res_celltype, out_html)
+  
+    # save metadata of pseudobulk object as file
+    metadata_file <- file.path(group_dir, "DESeq2_pseudobulk_metadata.txt")
+    write.table(colData(pb), metadata_file, sep = "\t", quote = FALSE, row.names = TRUE)
+  
+    # add parameter info of run as table to output
+    param_file <- file.path(group_dir, "DESeq2_run_parameters.tsv")
+    params_df <- data.frame(
+      'celltype' = group,
+      'pb_columns' = paste(pseudobulk_group_cols, collapse = ", "),
+      'category_column' = category_column,
+      'one_vs_all' = one_vs_all
+    )
+    write.table(params_df, param_file, sep = "\t", quote = FALSE, row.names = FALSE)
+  
+    return(res_celltype)
+  })
+  
+  # Filter out NULL results and combine
+  all_results <- Filter(Negate(is.null), all_results)
+  combined <- bind_rows(all_results)
+  
+  # Save combined results for this split group
+  if (split_name != "all") {
+    out_combined <- file.path(outdir_current, paste0("DESeq2_results_", split_name, ".tsv"))
+  } else {
+    out_combined <- file.path(outdir_current, "DESeq2_all_results.tsv")
   }
   
-  res_celltype <- bind_rows(res_list)
-  
-  # Save per-celltype results
-  group_dir <- file.path(outdir, group)
-  dir.create(group_dir, showWarnings = FALSE, recursive = TRUE)
-  
-  out_tsv <- file.path(group_dir, paste0("DESeq2_results.tsv"))
-  write.table(res_celltype, out_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
-  
-  out_html <- file.path(group_dir, paste0("volcano.html"))
-  save_volcano(res_celltype, out_html)
+  write.table(combined, out_combined, sep = "\t", quote = FALSE, row.names = FALSE)
+  message("\nCompleted analysis for split group '", split_name, "'. Results written to: ", outdir_current)
+}
 
-  # save metadata of pseudobulk object as file
-  metadata_file <- file.path(group_dir, "DESeq2_pseudobulk_metadata.txt")
-  write.table(colData(pb), metadata_file, sep = "\t", quote = FALSE, row.names = TRUE)
-
-  # add parameter info of run as table to output
-  param_file <- file.path(group_dir, "DESeq2_run_parameters.tsv")
-  params_df <- data.frame(
-    'celltype' = group,
-    'pb_columns' = paste(pseudobulk_group_cols, collapse = ", "),
-    'category_column' = category_column,
-    'one_vs_all' = one_vs_all
-  )
-  write.table(params_df, param_file, sep = "\t", quote = FALSE, row.names = FALSE)
-
-  return(res_celltype)
-})
-
-# Save combined results
-combined <- bind_rows(all_results)
-out_combined <- file.path(outdir, "DESeq2_all_results.tsv")
-write.table(combined, out_combined, sep = "\t", quote = FALSE, row.names = FALSE)
-
-message("\nAll done. Results written to: ", outdir)
+message("\n\nAll split groups processed. Total results in: ", outdir)
 Sys.time()
 
 # ---------------- Restore console ---------------- #
