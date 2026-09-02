@@ -112,6 +112,15 @@ server <- function(input, output, session) {
     celltype_click_counter(0)
   })
 
+  # Reset the detailed tabset whenever a new cell type is selected.
+  observeEvent(selected_celltype(), {
+    if (!is.null(selected_celltype()) && nzchar(selected_celltype())) {
+      session$onFlushed(function() {
+        updateTabsetPanel(session, "analysis_tabs", selected = "Overview")
+      }, once = TRUE)
+    }
+  }, ignoreInit = TRUE)
+
   # Overview data - with loading state and progress bar
   overview_data <- reactive({
     if (is.null(input$result_dir) || !nzchar(input$result_dir)) return(list())
@@ -319,7 +328,7 @@ server <- function(input, output, session) {
         onclick = sprintf("Shiny.setInputValue('celltype_click', '%s', {priority: 'event'})", ct_escaped),
         tags$h5(style = "margin: 0 0 6px 0; font-size: 14px;", ct),
         tags$div(style = "font-size: 11px; line-height: 1.25; margin:0;",
-          tags$div(tags$b("Contrasts:"), length(ct_data$contrasts)),
+          tags$div(tags$b("Contrasts:"), max(0, length(ct_data$contrasts))),
           tags$div(tags$b("Sig. genes:"), format(ct_data$total_sig_genes, big.mark = ","))
         ),
         tags$div(style = "margin-top:6px; background:#f1f3f5; height:6px; border-radius:4px; overflow:hidden;",
@@ -362,6 +371,18 @@ server <- function(input, output, session) {
   
   # DEG
   deg_df <- reactive({ read_deg_table(celltype_files()$deg_tsv) })
+
+  current_deg_contrast <- reactive({
+    df <- deg_df()
+    if (is.null(df) || !"contrast" %in% names(df)) return(NULL)
+    contrasts <- sort(unique(df$contrast))
+    if (length(contrasts) == 0) return(NULL)
+    if (!is.null(input$contrast) && nzchar(input$contrast) && input$contrast %in% contrasts) {
+      input$contrast
+    } else {
+      contrasts[1]
+    }
+  })
   
   output$deg_info <- renderUI({
     files <- celltype_files()
@@ -375,10 +396,11 @@ server <- function(input, output, session) {
     if (is.null(df) || !"contrast" %in% names(df)) return(NULL)
     contrasts <- sort(unique(df$contrast))
     if (length(contrasts) == 0) return(NULL)
+    selected_contrast <- current_deg_contrast()
     
     div(class = "card-like",
       h4("Select Contrast"),
-      selectInput("contrast", "Choose contrast for analysis", choices = contrasts, selected = contrasts[1])
+      selectInput("contrast", "Choose contrast for analysis", choices = contrasts, selected = selected_contrast)
     )
   })
 
@@ -495,8 +517,9 @@ server <- function(input, output, session) {
   filtered_deg_df <- reactive({
     df <- deg_df()
     if (is.null(df)) return(NULL)
-    if ("contrast" %in% names(df) && !is.null(input$contrast) && nzchar(input$contrast)) {
-      df <- subset(df, contrast == input$contrast)
+    contrast_value <- current_deg_contrast()
+    if ("contrast" %in% names(df) && !is.null(contrast_value) && nzchar(contrast_value)) {
+      df <- subset(df, contrast == contrast_value)
     }
     df
   })
@@ -512,7 +535,11 @@ server <- function(input, output, session) {
   observe({
     df_deg <- deg_df()
     df_gsea <- gsea_df()
-    n_contrasts <- if (!is.null(df_deg) && "contrast" %in% names(df_deg)) length(unique(df_deg$contrast)) else 0
+    n_contrasts <- if (!is.null(df_deg) && "contrast" %in% names(df_deg)) {
+      max(0, length(unique(df_deg$contrast)))
+    } else {
+      0
+    }
     sig_genes <- if (!is.null(df_deg) && all(c("padj", "log2foldchange") %in% names(df_deg))) sum(df_deg$padj < PADJ_THRESH & abs(df_deg$log2foldchange) >= LFC_THRESH, na.rm = TRUE) else 0
     sig_paths <- if (!is.null(df_gsea) && "fdr" %in% names(df_gsea)) sum(df_gsea$fdr <= 0.25, na.rm = TRUE) else 0
     output$vb_contrasts <- renderText(format(n_contrasts, big.mark = ","))
@@ -557,7 +584,7 @@ server <- function(input, output, session) {
     hl_col <- if (!is.null(input$highlight_color_name) && nzchar(input$highlight_color_name)) input$highlight_color_name else "#FFD166"
     sig_col <- if (!is.null(input$signif_color_name) && nzchar(input$signif_color_name)) input$signif_color_name else "#E4572E"
     topn <- if (!is.null(input$volcano_label_topn)) input$volcano_label_topn else 10
-    make_volcano(filtered_deg_df(), highlight_genes = hl, highlight_color = hl_col, signif_color = sig_col, label_top_n = topn)
+    make_volcano(filtered_deg_df(), highlight_genes = hl, highlight_color = hl_col, signif_color = sig_col, label_top_n = topn, contrast_name = input$contrast)
   }, res = 110)
   
   output$deg_table <- renderDT({
@@ -573,6 +600,18 @@ server <- function(input, output, session) {
   
   # GSEA
   gsea_df <- reactive({ read_gsea_results(celltype_files()$gsea_csvs) })
+
+  current_gsea_contrast <- reactive({
+    df <- gsea_df()
+    if (is.null(df) || !"comparison" %in% names(df)) return(NULL)
+    comps <- sort(unique(df$comparison))
+    if (length(comps) == 0) return(NULL)
+    if (!is.null(input$gsea_contrast) && nzchar(input$gsea_contrast) && input$gsea_contrast %in% comps) {
+      input$gsea_contrast
+    } else {
+      comps[1]
+    }
+  })
   
   output$gsea_info <- renderUI({
     files <- celltype_files()
@@ -587,14 +626,16 @@ server <- function(input, output, session) {
     if (is.null(df) || !"comparison" %in% names(df)) return(NULL)
     comps <- sort(unique(df$comparison))
     if (length(comps) == 0) return(NULL)
-    selectInput("gsea_contrast", "Select comparison", choices = comps, selected = comps[1])
+    selected_comparison <- current_gsea_contrast()
+    selectInput("gsea_contrast", "Select comparison", choices = comps, selected = selected_comparison)
   })
   
   filtered_gsea_df <- reactive({
     df <- gsea_df()
     if (is.null(df)) return(NULL)
-    if ("comparison" %in% names(df) && !is.null(input$gsea_contrast) && nzchar(input$gsea_contrast)) {
-      df <- subset(df, comparison == input$gsea_contrast)
+    comparison_value <- current_gsea_contrast()
+    if ("comparison" %in% names(df) && !is.null(comparison_value) && nzchar(comparison_value)) {
+      df <- subset(df, comparison == comparison_value)
     }
     df
   })
@@ -633,7 +674,7 @@ server <- function(input, output, session) {
   
   output$gsea_plot <- renderPlot({
     topn <- if (!is.null(input$gsea_top_n)) input$gsea_top_n else 10
-    make_gsea_plot(filtered_gsea_df(), top_n = topn)
+    make_gsea_plot(filtered_gsea_df(), top_n = topn, comparison_name = input$gsea_contrast)
   }, res = 110)
   
   output$gsea_table <- renderDT({
@@ -747,7 +788,7 @@ server <- function(input, output, session) {
     data <- overview_data()
     if (length(data) == 0) return("0")
     all_contrasts <- unique(unlist(lapply(data, function(x) x$contrasts)))
-    length(all_contrasts)
+    max(0, length(all_contrasts))
   })
   
   output$vb_total_sig_genes <- renderText({
@@ -810,7 +851,7 @@ server <- function(input, output, session) {
       uiOutput("contrast_selector"),
       # Pseudobulk stats (uses the global contrast selection)
       uiOutput("pseudobulk_stats"),
-      tabsetPanel(type = "pills",
+      tabsetPanel(id = "analysis_tabs", type = "pills",
         tabPanel(
           title = "Overview",
           div(class = "card-like",

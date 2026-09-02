@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y \
     liblzma-dev \
     libpcre2-dev \
     libreadline-dev \
+    libuv1-dev \
     zlib1g-dev \
     libgfortran5 \
     libquadmath0 \
@@ -66,7 +67,7 @@ RUN mkdir -p /app
 COPY install_packages.R /tmp/install_packages.R
 
 # Install R packages
-RUN Rscript /tmp/install_packages.R
+RUN Rscript /tmp/install_packages.R && Rscript -e "library(shiny); cat('shiny OK\n')"
 
 # Copy app files
 COPY app.R /app/

@@ -57,17 +57,51 @@ color_alpha <- function(hex, alpha = 1) {
 
 major_celltype_of <- function(name) {
   n <- tolower(name)
-  if (grepl("t cell|cd4|cd8|treg|nk|ilc", n)) return("T/NK/ILC")
-  if (grepl("b cell|bcell|plasma|plasmablast", n)) return("B/Plasma")
-  if (grepl("mono|macro|myeloid|neutro|dendritic|dc|mast", n)) {
-    if (grepl("mast", n)) return("Mast")
+
+  # Remove location prefix if present, e.g. "Colon/CD4" -> "CD4"
+  n <- sub("^(colon|ileum)/", "", n)
+
+  # T / NK / ILC lineage
+  if (grepl("\\bcd4\\b|\\bcd8\\b|\\btc\\b|tc effector|tc naive|\\bth\\b|th effector|th memory|th naive|th17|tfh|treg|t cells proliferating|nk cells|\\bilc\\b|ilc3", n)) {
+    return("T/NK/ILC")
+  }
+
+  # B / plasma lineage
+  if (grepl("b cell|plasma cell|plasma cell cycling|b cell cycling|b cell germinal center|b cell memory|b cell naive", n)) {
+    return("B/Plasma")
+  }
+
+  # Mast cells as separate class
+  if (grepl("mast", n)) {
+    return("Mast")
+  }
+
+  # Myeloid lineage
+  if (grepl("monocyte|monocytes|macrophage|macrophages|neutrophil|neutrophils|eosinophil|eosinophils|cdc1|cdc2|cdc migratory|\\bpdc\\b|dendritic|platelet|platelets", n)) {
     return("Myeloid")
   }
-  if (grepl("epi|epith|enterocyte|goblet|tuft|paneth|hepat|keratino|basal|club|alveol|cilia", n)) return("Epithelial")
-  if (grepl("endo|vascular", n)) return("Endothelial")
-  if (grepl("fibro|stromal|myofibro|mesench|smooth|pericyte|stellate", n)) return("Stromal")
-  if (grepl("neur|glia|schwann", n)) return("Neuronal/Glia")
-  "Other"
+
+  # Epithelial lineage
+  if (grepl("colonocyte|colonocytes|enterocyte|enterocytes|goblet|tuft|paneth|stem cells|ta cells|epithelial", n)) {
+    return("Epithelial")
+  }
+
+  # Endothelial lineage
+  if (grepl("endothelial|capillary endothelial|venous endothelial|lymphatic endothelial|vascular", n)) {
+    return("Endothelial")
+  }
+
+  # Stromal / mesenchymal lineage
+  if (grepl("fibroblast|fibroblasts|myofibroblast|myofibroblasts|pericyte|pericytes|smooth muscle|stromal|mesenchymal", n)) {
+    return("Stromal")
+  }
+
+  # Neuronal / glial lineage
+  if (grepl("glial|glia|neuronal|neuron|schwann", n)) {
+    return("Neuronal/Glia")
+  }
+
+  return("Other")
 }
 
 color_for_major_celltype <- function(name) {
@@ -179,7 +213,7 @@ list_directory_files <- function(dir_path) {
 find_celltype_files <- function(celltype_dir) {
   if (is.na(celltype_dir)) return(list())
   volcano_png <- list.files(celltype_dir, pattern = "^volcano\\.png$", full.names = TRUE, ignore.case = TRUE)
-  deg_tsv <- list.files(celltype_dir, pattern = "DESeq2.*\\.tsv$", full.names = TRUE, ignore.case = TRUE)
+  deg_tsv <- list.files(celltype_dir, pattern = "^DESeq2_results\\.tsv$", full.names = TRUE, ignore.case = TRUE)
   gsea_csvs <- list.files(celltype_dir, pattern = "gsea_results\\.csv$", full.names = TRUE, recursive = FALSE, ignore.case = TRUE)
   list(volcano_png = volcano_png, deg_tsv = deg_tsv, gsea_csvs = gsea_csvs)
 }
@@ -227,7 +261,7 @@ read_deg_table <- function(path, max_rows = NULL) {
   do.call(rbind, pieces)
 }
 
-make_volcano <- function(df, max_points = 50000, highlight_genes = NULL, highlight_color = "#FFD166", signif_color = "#E4572E", label_top_n = 10) {
+make_volcano <- function(df, max_points = 50000, highlight_genes = NULL, highlight_color = "#FFD166", signif_color = "#E4572E", label_top_n = 10, contrast_name = NULL) {
   if (is.null(df)) return(NULL)
   req_cols <- c("log2foldchange", "padj")
   if (!all(req_cols %in% names(df))) return(NULL)
@@ -246,14 +280,27 @@ make_volcano <- function(df, max_points = 50000, highlight_genes = NULL, highlig
     idx <- sample.int(nrow(plot_df), max_points)
     plot_df <- plot_df[idx, , drop = FALSE]
   }
+  
+  # Parse contrast name to show group labels
+  plot_title <- "Volcano Plot"
+  x_label <- "log2 fold change"
+  if (!is.null(contrast_name) && nzchar(contrast_name)) {
+    groups <- strsplit(contrast_name, "_vs_")[[1]]
+    if (length(groups) == 2) {
+      plot_title <- sprintf("Volcano Plot: %s vs %s", groups[1], groups[2])
+      x_label <- sprintf("log2 fold change (%s ← | → %s)", groups[2], groups[1])
+    }
+  }
+  
   p <- ggplot(plot_df, aes(x = log2foldchange, y = neglog10padj, color = significant)) +
     geom_point(alpha = 0.6, size = 1) +
     scale_color_manual(values = c("FALSE" = "#9AA0A6", "TRUE" = signif_color)) +
     geom_vline(xintercept = c(-LFC_THRESH, LFC_THRESH), linetype = "dashed", color = "#B0BEC5") +
     geom_hline(yintercept = -log10(PADJ_THRESH), linetype = "dashed", color = "#B0BEC5") +
-    labs(x = "log2 fold change", y = "-log10(padj)", color = paste0("sig: padj < ", PADJ_THRESH, " & |log2FC| >= ", LFC_THRESH)) +
+    labs(x = x_label, y = "-log10(padj)", title = plot_title, 
+         color = paste0("sig: padj < ", PADJ_THRESH, " & |log2FC| >= ", LFC_THRESH)) +
     theme_minimal(base_size = 13) +
-    theme(panel.grid.minor = element_blank())
+    theme(panel.grid.minor = element_blank(), plot.title = element_text(hjust = 0.5, face = "bold"))
   if (any(plot_df$highlight, na.rm = TRUE) && "gene" %in% names(plot_df)) {
     hl_df <- subset(plot_df, highlight)
     p <- p +
@@ -314,7 +361,7 @@ read_gsea_results <- function(csv_paths) {
   do.call(rbind, pieces)
 }
 
-make_gsea_plot <- function(df, fdr_cutoff = 0.25, top_n = 10) {
+make_gsea_plot <- function(df, fdr_cutoff = 0.25, top_n = 10, comparison_name = NULL) {
   if (is.null(df)) return(NULL)
   if (!all(c("pathway", "nes", "comparison") %in% names(df))) return(NULL)
   plot_df <- df
@@ -326,12 +373,22 @@ make_gsea_plot <- function(df, fdr_cutoff = 0.25, top_n = 10) {
   plot_df <- do.call(rbind, lapply(split(plot_df, plot_df$comparison), function(d) head(d, top_n)))
   if (nrow(plot_df) == 0) return(NULL)
   plot_df$pathway <- factor(plot_df$pathway)
+  
+  # Parse comparison name to show group labels on x-axis
+  x_label <- "NES"
+  if (!is.null(comparison_name) && nzchar(comparison_name)) {
+    groups <- strsplit(comparison_name, "_vs_")[[1]]
+    if (length(groups) == 2) {
+      x_label <- sprintf("NES (%s ← | → %s)", groups[2], groups[1])
+    }
+  }
+  
   ggplot(plot_df, aes(x = reorder(pathway, nes), y = nes, fill = nes > 0)) +
     geom_col() +
     coord_flip() +
     facet_wrap(~ comparison, scales = "free_y") +
     scale_fill_manual(values = c("TRUE" = "#2E86AB", "FALSE" = "#E4572E"), guide = "none") +
-    labs(x = "Pathway", y = "NES") +
+    labs(x = "Pathway", y = x_label) +
     theme_minimal(base_size = 13) +
     theme(panel.grid.minor = element_blank())
 }
@@ -377,15 +434,33 @@ scan_result_overview <- function(result_basename, progress = NULL) {
     }
     
     # Calculate summary stats
-    contrasts <- if (!is.null(deg_data) && "contrast" %in% names(deg_data)) unique(deg_data$contrast) else character()
-    comparisons <- if (!is.null(gsea_data) && "comparison" %in% names(gsea_data)) unique(gsea_data$comparison) else character()
+    contrasts <- if (!is.null(deg_data) && "contrast" %in% names(deg_data)) {
+      unique(deg_data$contrast)
+    } else {
+      character()
+    }
+
+    comparisons <- if (!is.null(gsea_data) && "comparison" %in% names(gsea_data)) {
+      sort(unique(na.omit(as.character(gsea_data$comparison))))
+    } else {
+      character()
+    }
     
     # Count significant genes per contrast
     sig_genes_by_contrast <- if (!is.null(deg_data) && all(c("contrast", "padj", "log2foldchange") %in% names(deg_data))) {
-      split_data <- split(deg_data, deg_data$contrast)
-      sapply(split_data, function(d) {
-        sum(d$padj < PADJ_THRESH & abs(d$log2foldchange) >= LFC_THRESH, na.rm = TRUE)
-      })
+      deg_data$contrast <- as.character(deg_data$contrast)
+      deg_data <- deg_data[!is.na(deg_data$contrast) & nzchar(deg_data$contrast), , drop = FALSE]
+
+      counts <- tapply(
+        deg_data$padj < PADJ_THRESH & abs(deg_data$log2foldchange) >= LFC_THRESH,
+        deg_data$contrast,
+        sum,
+        na.rm = TRUE
+      )
+
+      counts <- counts[contrasts]
+      counts[is.na(counts)] <- 0
+      counts
     } else {
       setNames(integer(length(contrasts)), contrasts)
     }
