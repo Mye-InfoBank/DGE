@@ -217,11 +217,22 @@ server <- function(input, output, session) {
       ),
       div(class = "card-like",
         h4("Overview Heatmap"),
-        plotOutput("overview_heatmap", height = "600px") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB")
+        plotOutput("overview_heatmap", height = "600px") %>%
+          shinycssloaders::withSpinner(type = 7, color = "#2E86AB"),
+        downloadButton(
+          "download_overview_heatmap",
+          "Download PNG",
+          class = "btn btn-outline-primary btn-sm"
+        )
       ),
       div(class = "card-like",
         h4("Cell Type Totals"),
-        uiOutput("overview_summary_dynamic")
+        uiOutput("overview_summary_dynamic"),
+        downloadButton(
+          "download_overview_summary",
+          "Download PNG",
+          class = "btn btn-outline-primary btn-sm"
+        )
       ),
       div(class = "card-like",
         h4("Cell Type Summary"),
@@ -544,7 +555,12 @@ server <- function(input, output, session) {
         div(
           style = "display: flex; flex-direction: column; justify-content: center;",
           h5("Cell Count Distribution", style = "text-align: center; margin-bottom: 10px;"),
-          plotOutput("pseudobulk_density_plot", height = "300px")
+          plotOutput("pseudobulk_density_plot", height = "300px"),
+          downloadButton(
+            "download_pseudobulk_density",
+            "Download PNG",
+            class = "btn btn-outline-primary btn-sm"
+          )
         ),
         
         # Group 2 stats (right)
@@ -643,6 +659,50 @@ server <- function(input, output, session) {
       ) +
       scale_x_continuous(labels = scales::comma_format())
   }, res = 110)
+
+  output$download_pseudobulk_density <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$contrast,
+        "_cell_count_distribution.png"
+      )
+    },
+    content = function(file) {
+      stats <- pseudobulk_stats_reactive()
+
+      plot_data <- data.frame(
+        group = c(
+          rep(stats$group1_name, length(stats$group1_n_cells_per_sample)),
+          rep(stats$group2_name, length(stats$group2_n_cells_per_sample))
+        ),
+        cells_per_sample = c(
+          stats$group1_n_cells_per_sample,
+          stats$group2_n_cells_per_sample
+        )
+      )
+
+      p <- ggplot(plot_data, aes(x = cells_per_sample, fill = group)) +
+        geom_density(alpha = 0.7) +
+        scale_fill_manual(values = c("#2E86AB", "#A23B72")) +
+        labs(
+          x = "Cells per Sample",
+          y = "Density",
+          fill = "Group"
+        ) +
+        theme_minimal() +
+        theme(
+          legend.position = "bottom",
+          legend.title = element_blank(),
+          panel.grid.minor = element_blank(),
+          text = element_text(size = 10)
+        ) +
+        scale_x_continuous(labels = scales::comma_format())
+
+      ggsave(file, p, width = 8, height = 5, dpi = 300)
+    }
+  )
   
   output$volcano_plot <- renderPlot({
     hl <- input$highlight_genes
@@ -789,11 +849,6 @@ server <- function(input, output, session) {
 
       ggsave(file, p, width = 10, height = 7, dpi = 300)
     }
-  )
-  downloadButton(
-    "download_gsea",
-    "Download PNG",
-    class = "btn btn-outline-primary btn-sm"
   )
   
   output$gsea_table <- renderDT({
@@ -947,6 +1002,27 @@ server <- function(input, output, session) {
     if (length(files$volcano_png) == 0) return(tags$em("No volcano.png found."))
     tags$img(src = base64enc::dataURI(file = files$volcano_png[1], mime = "image/png"), style = "max-width:100%; height:auto;")
   })
+
+  output$download_volcano_png <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_static_volcano.png"
+      )
+    },
+    content = function(file) {
+      files <- celltype_files()
+
+      req(length(files$volcano_png) > 0)
+
+      file.copy(
+        files$volcano_png[1],
+        file,
+        overwrite = TRUE
+      )
+    },
+    contentType = "image/png"
+  )
   
   # Detailed panel
   output$detailed_panel <- renderUI({
@@ -1035,6 +1111,12 @@ server <- function(input, output, session) {
             sliderInput("gsea_top_n", "Top pathways to show", min = 5, max = 100, value = 10, step = 5),
             uiOutput("gsea_doc"),
             plotOutput("gsea_plot", height = "520px") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB"),
+            downloadButton(
+              "download_gsea",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            ),
+
             uiOutput("gsea_pathway_selector"),
             div(style = "margin-top: 12px;",
               h5("Enrichment plot (PNG)"),
@@ -1051,7 +1133,12 @@ server <- function(input, output, session) {
           value = "png",
           div(class = "card-like",
             h4("Volcano (static PNG)"),
-            uiOutput("volcano_png_ui")
+            uiOutput("volcano_png_ui"),
+            downloadButton(
+              "download_volcano_png",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            )
           )
         ),
         tabPanel(
