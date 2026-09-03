@@ -9,6 +9,8 @@ suppressPackageStartupMessages({
   library(base64enc)
 })
 
+source("ai_snapshots.R")
+
 # Absolute path to the DEA output root
 OUTPUT_ROOT <- "/nfs/data/COST_IBD/downstream_tasks/dea/output"
 

@@ -2,6 +2,8 @@ server <- function(input, output, session) {
   # Use reactive value for selected cell type instead of hidden input
   selected_celltype <- reactiveVal("")
 
+  ai_snapshot_relative_url <- reactiveVal(NULL)
+
   #giving browser simple state what to show
   output$show_detail <- renderText({
     if (nzchar(selected_celltype())) "true" else "false"
@@ -792,6 +794,277 @@ server <- function(input, output, session) {
     }
     df
   })
+
+  build_ai_snapshot_payload <- function() {
+
+    ov <- overview_data()
+    ct <- selected_celltype()
+    detail <- !is.null(ct) && nzchar(ct)
+
+    # ----------------------------------------------------------
+    # Global overview: all cell types, summary only
+    # ----------------------------------------------------------
+
+    all_celltypes <- lapply(names(ov), function(x) {
+      d <- ov[[x]]
+
+      list(
+        celltype = x,
+        major_class = if (!is.null(d$major_class)) d$major_class else NULL,
+        n_contrasts = length(d$contrasts),
+        total_sig_genes = as.integer(d$total_sig_genes),
+        total_sig_pathways = as.integer(d$total_sig_paths)
+      )
+    })
+
+    payload <- list(
+      schema_version = "1.0",
+      view = if (detail) "celltype_detail" else "overview",
+
+      metadata = list(
+        analysis = "Pseudobulk DESeq2 + Hallmark GSEA",
+        results_directory = input$result_dir,
+        selected_celltype = if (detail) ct else NULL,
+        de_contrast = if (detail) current_deg_contrast() else NULL,
+        gsea_comparison = if (detail) current_gsea_contrast() else NULL
+      ),
+
+      thresholds = list(
+        padj = PADJ_THRESH,
+        abs_log2fc = LFC_THRESH,
+        gsea_fdr = 0.25
+      ),
+
+      interpretation_notes = list(
+        "Positive log2FC = higher in first group of contrast.",
+        "Negative log2FC = higher in second group.",
+        "Positive NES = enrichment in first group.",
+        "Negative NES = enrichment in second group."
+      ),
+
+      global_overview = list(
+        n_celltypes = length(all_celltypes),
+        celltypes = all_celltypes
+      ),
+
+      selected_celltype_detail = NULL
+    )
+
+    if (!detail) return(payload)
+
+    # ----------------------------------------------------------
+    # Selected cell type: detailed data
+    # ----------------------------------------------------------
+
+    deg <- filtered_deg_df()
+    gsea <- filtered_gsea_df()
+    stats <- pseudobulk_stats_reactive()
+
+    deg_detail <- list()
+    gsea_detail <- list()
+    sample_info <- NULL
+
+    # Samples
+    if (!is.null(stats)) {
+      sample_info <- list(
+        group1 = list(
+          name = stats$group1_name,
+          n_samples = stats$group1_n_samples,
+          total_cells = sum(stats$group1_n_cells_per_sample, na.rm = TRUE),
+          median_cells_per_sample = median(stats$group1_n_cells_per_sample, na.rm = TRUE)
+        ),
+        group2 = list(
+          name = stats$group2_name,
+          n_samples = stats$group2_n_samples,
+          total_cells = sum(stats$group2_n_cells_per_sample, na.rm = TRUE),
+          median_cells_per_sample = median(stats$group2_n_cells_per_sample, na.rm = TRUE)
+        )
+      )
+    }
+
+    # DEG
+    if (!is.null(deg) && nrow(deg)) {
+      sig <- deg$padj < PADJ_THRESH & abs(deg$log2foldchange) >= LFC_THRESH
+      up <- sig & deg$log2foldchange >= LFC_THRESH
+      down <- sig & deg$log2foldchange <= -LFC_THRESH
+
+      cols <- intersect(
+        c("gene", "baseMean", "log2foldchange", "pvalue", "padj", "contrast"),
+        names(deg)
+      )
+
+      up_df <- deg[up, , drop = FALSE]
+      down_df <- deg[down, , drop = FALSE]
+
+      up_df <- head(up_df[order(up_df$padj, -up_df$log2foldchange), cols, drop = FALSE], 50)
+      down_df <- head(down_df[order(down_df$padj, down_df$log2foldchange), cols, drop = FALSE], 50)
+      top_df <- head(deg[order(deg$padj), cols, drop = FALSE], 100)
+
+      deg_detail <- list(
+        contrast = current_deg_contrast(),
+        summary = list(
+          genes_tested = nrow(deg),
+          significant_genes = sum(sig, na.rm = TRUE),
+          upregulated = sum(up, na.rm = TRUE),
+          downregulated = sum(down, na.rm = TRUE)
+        ),
+        top_up = records(up_df),
+        top_down = records(down_df),
+        top_by_padj = records(top_df),
+        highlighted_genes = input$highlight_genes
+      )
+    }
+
+    # GSEA
+    if (!is.null(gsea) && nrow(gsea)) {
+      cols <- intersect(
+        c("comparison", "pathway", "nes", "fdr", "pval", "size", "msigdb_url"),
+        names(gsea)
+      )
+
+      pos <- gsea[!is.na(gsea$nes) & gsea$nes > 0, , drop = FALSE]
+      neg <- gsea[!is.na(gsea$nes) & gsea$nes < 0, , drop = FALSE]
+
+      pos <- head(pos[order(-pos$nes, pos$fdr), cols, drop = FALSE], 25)
+      neg <- head(neg[order(neg$nes, neg$fdr), cols, drop = FALSE], 25)
+
+      selected_row <- NULL
+
+      if (
+        !is.null(input$gsea_pathway) &&
+        nzchar(input$gsea_pathway) &&
+        "pathway" %in% names(gsea)
+      ) {
+        selected_row <- gsea[gsea$pathway == input$gsea_pathway, cols, drop = FALSE]
+      }
+
+      gsea_detail <- list(
+        comparison = current_gsea_contrast(),
+        summary = list(
+          pathways_tested = if (HALLMARK_COUNT > 0) HALLMARK_COUNT else nrow(gsea),
+          significant_pathways = sum(gsea$fdr <= 0.25, na.rm = TRUE)
+        ),
+        top_positive_nes = records(pos),
+        top_negative_nes = records(neg),
+        selected_pathway = input$gsea_pathway,
+        selected_pathway_result = records(selected_row)
+      )
+    }
+
+    payload$selected_celltype_detail <- list(
+      celltype = ct,
+      sample_information = sample_info,
+      differential_expression = deg_detail,
+      gsea = gsea_detail,
+      display_state = list(
+        volcano_top_n = input$volcano_label_topn,
+        highlighted_genes = input$highlight_genes,
+        gsea_top_n = input$gsea_top_n,
+        selected_gsea_pathway = input$gsea_pathway
+      )
+    )
+
+    payload
+  }
+
+  observeEvent(input$create_ai_snapshot, {
+
+    req(input$result_dir)
+
+    tryCatch({
+
+      payload <- build_ai_snapshot_payload()
+      id <- save_ai_snapshot(payload)
+
+      url <- paste0("ai_snapshots/", id, ".json")
+
+      ai_snapshot_relative_url(url)
+
+      updateActionButton(
+        session,
+        "create_ai_snapshot",
+        label = "✓ Snapshot Created!"
+      )
+
+      showNotification(
+        "AI snapshot created successfully.",
+        type = "message"
+      )
+
+    }, error = function(e) {
+
+      message("AI snapshot error: ", conditionMessage(e))
+
+      showNotification(
+        paste("Could not create snapshot:", conditionMessage(e)),
+        type = "error"
+      )
+    })
+  })
+
+  output$ai_snapshot_link <- renderUI({
+
+    url <- ai_snapshot_relative_url()
+    if (is.null(url) || !nzchar(url)) return(NULL)
+    tagList(
+
+      tags$p(tags$b("Snapshot created:")),
+      tags$a(
+        "Open AI snapshot",
+        href = url,
+        target = "_blank"
+      ),
+
+      tags$br(),
+      tags$br(),
+
+      tags$input(
+        id = "ai_snapshot_url_field",
+        type = "text",
+        readonly = "readonly",
+        value = url,
+        class = "form-control ai-snapshot-url",
+        onclick = "this.select();"
+      ),
+
+      tags$br(),
+
+      tags$button(
+        "📋 Copy URL",
+        type = "button",
+        class = "btn btn-secondary",
+        onclick = HTML("
+          const field = document.getElementById('ai_snapshot_url_field');
+          if (!field) return;
+
+          field.focus();
+          field.select();
+          field.setSelectionRange(0, field.value.length);
+
+          const ok = document.execCommand('copy');
+          this.innerText = ok ? '✓ Copied!' : 'Select URL and press Ctrl+C';
+        ")
+      ),
+
+      tags$br(),
+      tags$br(),
+
+      tags$p(
+        class = "muted",
+        "Paste this URL into ChatGPT, Claude, Gemini or another LLM."
+      ),
+
+      tags$script(
+        HTML(sprintf("
+          (function() {
+            const field = document.getElementById('ai_snapshot_url_field');
+            if (!field) return;
+            field.value = new URL('%s', window.location.href).href;
+          })();
+        ", url))
+      )
+    )
+  })
   
   output$gsea_doc <- renderUI({
     ct <- selected_celltype()
@@ -812,6 +1085,28 @@ server <- function(input, output, session) {
     }
     choices <- unique(df$pathway)
     selectInput("gsea_pathway", "Select pathway", choices = choices, selected = choices[1])
+  })
+
+  observe({
+
+    input$result_dir
+    selected_celltype()
+
+    input$contrast
+    input$highlight_genes
+    input$volcano_label_topn
+
+    input$gsea_contrast
+    input$gsea_top_n
+    input$gsea_pathway
+
+    ai_snapshot_relative_url(NULL)
+
+    updateActionButton(
+      session,
+      "create_ai_snapshot",
+      label = "🔗 Create AI Snapshot"
+    )
   })
   
   output$gsea_png <- renderUI({
