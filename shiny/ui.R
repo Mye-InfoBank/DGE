@@ -52,9 +52,16 @@ ui <- page_fluid(
     div(
       # Step 1: Overview when result directory is selected but no cell type
       uiOutput("no_directory_panel"),
-      uiOutput("overview_panel"),
+
+      conditionalPanel(
+        condition = "output.show_detail === 'false'",
+        uiOutput("overview_panel")
+      ),
       # Step 2: Detailed view once a cell type has been selected
-      uiOutput("detailed_panel")
+      conditionalPanel(
+        condition = "output.show_detail === 'true'",
+        uiOutput("detailed_panel")
+      )
     )
   )
 ) 

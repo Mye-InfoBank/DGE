@@ -1,6 +1,17 @@
 server <- function(input, output, session) {
   # Use reactive value for selected cell type instead of hidden input
   selected_celltype <- reactiveVal("")
+
+  #giving browser simple state what to show
+  output$show_detail <- renderText({
+    if (nzchar(selected_celltype())) "true" else "false"
+  })
+
+  outputOptions(
+    output,
+    "show_detail",
+    suspendWhenHidden = FALSE
+  )
   
   # Load pseudobulk metadata for selected celltype
   pseudobulk_metadata <- reactive({
@@ -71,7 +82,7 @@ server <- function(input, output, session) {
     )
   })
   # Add a counter for cell type clicks to handle repeated clicks
-  celltype_click_counter <- reactiveVal(0)
+  #celltype_click_counter <- reactiveVal(0)
   
   # Add loading state for overview data
   overview_loading <- reactiveVal(FALSE)
@@ -102,24 +113,20 @@ server <- function(input, output, session) {
   # Reset selected cell type when result directory changes
   observeEvent(input$result_dir, {
     selected_celltype("")
-    celltype_click_counter(0)
+    #celltype_click_counter(0)
     overview_loading(FALSE)  # Reset loading state
   })
   
   # Back to overview button
   observeEvent(input$back_to_overview, {
+    cat("\nBACK CLICK RECEIVED\n")
+    cat("before:", selected_celltype(), "\n")
+
     selected_celltype("")
-    celltype_click_counter(0)
+
+    cat("after:", selected_celltype(), "\n\n")
   })
 
-  # Reset the detailed tabset whenever a new cell type is selected.
-  observeEvent(selected_celltype(), {
-    if (!is.null(selected_celltype()) && nzchar(selected_celltype())) {
-      session$onFlushed(function() {
-        updateTabsetPanel(session, "analysis_tabs", selected = "Overview")
-      }, once = TRUE)
-    }
-  }, ignoreInit = TRUE)
 
   # Overview data - with loading state and progress bar
   overview_data <- reactive({
@@ -174,7 +181,8 @@ server <- function(input, output, session) {
   
   # Overview panel
   output$overview_panel <- renderUI({
-    if (is.null(input$result_dir) || !nzchar(input$result_dir) || nzchar(selected_celltype())) {
+    
+    if (is.null(input$result_dir) || !nzchar(input$result_dir)) {
       return(NULL)
     }
     
@@ -267,10 +275,40 @@ server <- function(input, output, session) {
   output$overview_heatmap <- renderPlot({
     make_overview_heatmap(overview_data())
   }, res = 110)
+
+  output$download_overview_heatmap <- downloadHandler(
+    filename = function() {
+      paste0(input$result_dir, "_overview_heatmap.png")
+    },
+    content = function(file) {
+      ggsave(
+        file,
+        make_overview_heatmap(overview_data()),
+        width = 12,
+        height = 8,
+        dpi = 300
+      )
+    }
+  )
   
   output$overview_summary <- renderPlot({
     make_overview_summary_plot(overview_data())
   }, res = 110)
+
+  output$download_overview_summary <- downloadHandler(
+    filename = function() {
+      paste0(input$result_dir, "_celltype_totals.png")
+    },
+    content = function(file) {
+      ggsave(
+        file,
+        make_overview_summary_plot(overview_data()),
+        width = 10,
+        height = 8,
+        dpi = 300
+      )
+    }
+  )
   
   output$overview_summary_table <- renderDT({
     data <- overview_data()
@@ -346,7 +384,34 @@ server <- function(input, output, session) {
   # Cell type selection handler - prioritize event; allow repeated same-value clicks
   observeEvent(input$celltype_click, {
     val <- input$celltype_click
-    if (!is.null(val) && nzchar(val)) selected_celltype(val)
+    #######
+    cat("\n========================\n")
+    cat("CELLTYPE CLICK RECEIVED\n")
+    cat("clicked:", val, "\n")
+    cat("before:", selected_celltype(), "\n")
+
+    if (!is.null(val) && nzchar(val)) {
+      selected_celltype(val)
+    }
+
+    cat("after:", selected_celltype(), "\n")
+    cat("========================\n\n")
+  }, ignoreInit = TRUE)
+  #  if (!is.null(val) && nzchar(val)) selected_celltype(val)
+  #}, ignoreInit = TRUE)
+
+  observeEvent(selected_celltype(), {
+
+    if (nzchar(selected_celltype())) {
+
+      updateTabsetPanel(
+        session,
+        "analysis_tabs",
+        selected = "overview"
+      )
+
+    }
+
   }, ignoreInit = TRUE)
   
   # Selected paths for detailed view
@@ -586,6 +651,34 @@ server <- function(input, output, session) {
     topn <- if (!is.null(input$volcano_label_topn)) input$volcano_label_topn else 10
     make_volcano(filtered_deg_df(), highlight_genes = hl, highlight_color = hl_col, signif_color = sig_col, label_top_n = topn, contrast_name = input$contrast)
   }, res = 110)
+
+  output$download_volcano <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$contrast,
+        "_volcano.png"
+      )
+    },
+    content = function(file) {
+      hl <- input$highlight_genes
+      hl_col <- if (!is.null(input$highlight_color_name) && nzchar(input$highlight_color_name)) input$highlight_color_name else "#FFD166"
+      sig_col <- if (!is.null(input$signif_color_name) && nzchar(input$signif_color_name)) input$signif_color_name else "#E4572E"
+      topn <- if (!is.null(input$volcano_label_topn)) input$volcano_label_topn else 10
+
+      p <- make_volcano(
+        filtered_deg_df(),
+        highlight_genes = hl,
+        highlight_color = hl_col,
+        signif_color = sig_col,
+        label_top_n = topn,
+        contrast_name = input$contrast
+      )
+
+      ggsave(file, p, width = 10, height = 8, dpi = 300)
+    }
+  )
   
   output$deg_table <- renderDT({
     df <- filtered_deg_df()
@@ -676,6 +769,32 @@ server <- function(input, output, session) {
     topn <- if (!is.null(input$gsea_top_n)) input$gsea_top_n else 10
     make_gsea_plot(filtered_gsea_df(), top_n = topn, comparison_name = input$gsea_contrast)
   }, res = 110)
+  output$download_gsea <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$gsea_contrast,
+        "_gsea.png"
+      )
+    },
+    content = function(file) {
+      topn <- if (!is.null(input$gsea_top_n)) input$gsea_top_n else 10
+
+      p <- make_gsea_plot(
+        filtered_gsea_df(),
+        top_n = topn,
+        comparison_name = input$gsea_contrast
+      )
+
+      ggsave(file, p, width = 10, height = 7, dpi = 300)
+    }
+  )
+  downloadButton(
+    "download_gsea",
+    "Download PNG",
+    class = "btn btn-outline-primary btn-sm"
+  )
   
   output$gsea_table <- renderDT({
     df <- filtered_gsea_df()
@@ -831,9 +950,11 @@ server <- function(input, output, session) {
   
   # Detailed panel
   output$detailed_panel <- renderUI({
-    if (is.null(input$result_dir) || !nzchar(input$result_dir) || !nzchar(selected_celltype())) {
+    
+    if (is.null(input$result_dir) || !nzchar(input$result_dir)) {
       return(NULL)
     }
+  
     
     tagList(
       div(class = "card-like",
@@ -851,9 +972,14 @@ server <- function(input, output, session) {
       uiOutput("contrast_selector"),
       # Pseudobulk stats (uses the global contrast selection)
       uiOutput("pseudobulk_stats"),
-      tabsetPanel(id = "analysis_tabs", type = "pills",
+      tabsetPanel(
+        id = "analysis_tabs",
+        type = "pills",
+        selected = "overview",
+
         tabPanel(
           title = "Overview",
+          value = "overview",
           div(class = "card-like",
             h4("DE contrasts"),
             DTOutput("deg_summary_table") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB")
@@ -865,6 +991,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "DESeq2",
+          value = "deseq2",
           div(class = "card-like",
             h4("Differential expression"),
             uiOutput("deg_info"),
@@ -886,7 +1013,12 @@ server <- function(input, output, session) {
               )
             ),
             sliderInput("volcano_label_topn", "Label top N significant genes", min = 0, max = 50, value = 10, step = 1),
-            plotOutput("volcano_plot", height = "640px") %>% shinycssloaders::withSpinner(type = 7, color = "#E4572E")
+            plotOutput("volcano_plot", height = "640px") %>% shinycssloaders::withSpinner(type = 7, color = "#E4572E"),
+            downloadButton(
+              "download_volcano",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            )
           ),
           div(class = "card-like",
             h4("DE results table"),
@@ -895,6 +1027,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "GSEA",
+          value = "gsea",
           div(class = "card-like",
             h4("Enrichment (Hallmark)"),
             uiOutput("gsea_info"),
@@ -915,6 +1048,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "PNG Preview",
+          value = "png",
           div(class = "card-like",
             h4("Volcano (static PNG)"),
             uiOutput("volcano_png_ui")
@@ -922,6 +1056,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "Logs (advanced)",
+          value = "logs",
           div(class = "card-like",
             span(class = "muted", "Technical details for troubleshooting; not needed for normal use."),
             h4("Latest DESeq2 log"),
@@ -935,4 +1070,8 @@ server <- function(input, output, session) {
       )
     )
   })
+  # Keep the main dynamic UI outputs reactive even while currently empty/hidden
+  outputOptions(output, "detailed_panel", suspendWhenHidden = FALSE)
+  outputOptions(output, "overview_panel", suspendWhenHidden = FALSE)
+
 } 
