@@ -5,7 +5,7 @@ services:
     build: .
     container_name: dea-shiny-app
     ports:
-      - "3838:3838"
+      - "3900:3838"
     volumes:
       # Mount the DEA output directory
       - /nfs/data/COST_IBD/downstream_tasks/dea/output:/data:ro
@@ -16,7 +16,7 @@ services:
       - R_MAX_NUM_THREADS=4
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3838"]
+      test: ["CMD", "curl", "-f", "http://localhost:3900"]
       interval: 30s
       timeout: 10s
       retries: 3

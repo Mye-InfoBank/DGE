@@ -34,13 +34,12 @@ cran_packages <- c(
   "shinycssloaders", # Loading spinners
   "ggrepel",         # Text labels for plots
   "base64enc",       # Base64 encoding for images
-  "future"           # Parallel processing
+  "future",
+  "msigdbr"         # Parallel processing
 )
 
 # Essential Bioconductor packages
-bioc_packages <- c(
-  "msigdbr"          # MSigDB gene sets
-)
+bioc_packages <- c()
 
 # Install CRAN packages
 cat("Installing CRAN packages...\n")

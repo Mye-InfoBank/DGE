@@ -1,6 +1,19 @@
 server <- function(input, output, session) {
   # Use reactive value for selected cell type instead of hidden input
   selected_celltype <- reactiveVal("")
+
+  ai_snapshot_relative_url <- reactiveVal(NULL)
+
+  #giving browser simple state what to show
+  output$show_detail <- renderText({
+    if (nzchar(selected_celltype())) "true" else "false"
+  })
+
+  outputOptions(
+    output,
+    "show_detail",
+    suspendWhenHidden = FALSE
+  )
   
   # Load pseudobulk metadata for selected celltype
   pseudobulk_metadata <- reactive({
@@ -71,7 +84,7 @@ server <- function(input, output, session) {
     )
   })
   # Add a counter for cell type clicks to handle repeated clicks
-  celltype_click_counter <- reactiveVal(0)
+  #celltype_click_counter <- reactiveVal(0)
   
   # Add loading state for overview data
   overview_loading <- reactiveVal(FALSE)
@@ -102,15 +115,20 @@ server <- function(input, output, session) {
   # Reset selected cell type when result directory changes
   observeEvent(input$result_dir, {
     selected_celltype("")
-    celltype_click_counter(0)
+    #celltype_click_counter(0)
     overview_loading(FALSE)  # Reset loading state
   })
   
   # Back to overview button
   observeEvent(input$back_to_overview, {
+    cat("\nBACK CLICK RECEIVED\n")
+    cat("before:", selected_celltype(), "\n")
+
     selected_celltype("")
-    celltype_click_counter(0)
+
+    cat("after:", selected_celltype(), "\n\n")
   })
+
 
   # Overview data - with loading state and progress bar
   overview_data <- reactive({
@@ -165,7 +183,8 @@ server <- function(input, output, session) {
   
   # Overview panel
   output$overview_panel <- renderUI({
-    if (is.null(input$result_dir) || !nzchar(input$result_dir) || nzchar(selected_celltype())) {
+    
+    if (is.null(input$result_dir) || !nzchar(input$result_dir)) {
       return(NULL)
     }
     
@@ -200,11 +219,22 @@ server <- function(input, output, session) {
       ),
       div(class = "card-like",
         h4("Overview Heatmap"),
-        plotOutput("overview_heatmap", height = "600px") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB")
+        plotOutput("overview_heatmap", height = "600px") %>%
+          shinycssloaders::withSpinner(type = 7, color = "#2E86AB"),
+        downloadButton(
+          "download_overview_heatmap",
+          "Download PNG",
+          class = "btn btn-outline-primary btn-sm"
+        )
       ),
       div(class = "card-like",
         h4("Cell Type Totals"),
-        uiOutput("overview_summary_dynamic")
+        uiOutput("overview_summary_dynamic"),
+        downloadButton(
+          "download_overview_summary",
+          "Download PNG",
+          class = "btn btn-outline-primary btn-sm"
+        )
       ),
       div(class = "card-like",
         h4("Cell Type Summary"),
@@ -258,10 +288,40 @@ server <- function(input, output, session) {
   output$overview_heatmap <- renderPlot({
     make_overview_heatmap(overview_data())
   }, res = 110)
+
+  output$download_overview_heatmap <- downloadHandler(
+    filename = function() {
+      paste0(input$result_dir, "_overview_heatmap.png")
+    },
+    content = function(file) {
+      ggsave(
+        file,
+        make_overview_heatmap(overview_data()),
+        width = 12,
+        height = 8,
+        dpi = 300
+      )
+    }
+  )
   
   output$overview_summary <- renderPlot({
     make_overview_summary_plot(overview_data())
   }, res = 110)
+
+  output$download_overview_summary <- downloadHandler(
+    filename = function() {
+      paste0(input$result_dir, "_celltype_totals.png")
+    },
+    content = function(file) {
+      ggsave(
+        file,
+        make_overview_summary_plot(overview_data()),
+        width = 10,
+        height = 8,
+        dpi = 300
+      )
+    }
+  )
   
   output$overview_summary_table <- renderDT({
     data <- overview_data()
@@ -319,7 +379,7 @@ server <- function(input, output, session) {
         onclick = sprintf("Shiny.setInputValue('celltype_click', '%s', {priority: 'event'})", ct_escaped),
         tags$h5(style = "margin: 0 0 6px 0; font-size: 14px;", ct),
         tags$div(style = "font-size: 11px; line-height: 1.25; margin:0;",
-          tags$div(tags$b("Contrasts:"), length(ct_data$contrasts)),
+          tags$div(tags$b("Contrasts:"), max(0, length(ct_data$contrasts))),
           tags$div(tags$b("Sig. genes:"), format(ct_data$total_sig_genes, big.mark = ","))
         ),
         tags$div(style = "margin-top:6px; background:#f1f3f5; height:6px; border-radius:4px; overflow:hidden;",
@@ -337,7 +397,34 @@ server <- function(input, output, session) {
   # Cell type selection handler - prioritize event; allow repeated same-value clicks
   observeEvent(input$celltype_click, {
     val <- input$celltype_click
-    if (!is.null(val) && nzchar(val)) selected_celltype(val)
+    #######
+    cat("\n========================\n")
+    cat("CELLTYPE CLICK RECEIVED\n")
+    cat("clicked:", val, "\n")
+    cat("before:", selected_celltype(), "\n")
+
+    if (!is.null(val) && nzchar(val)) {
+      selected_celltype(val)
+    }
+
+    cat("after:", selected_celltype(), "\n")
+    cat("========================\n\n")
+  }, ignoreInit = TRUE)
+  #  if (!is.null(val) && nzchar(val)) selected_celltype(val)
+  #}, ignoreInit = TRUE)
+
+  observeEvent(selected_celltype(), {
+
+    if (nzchar(selected_celltype())) {
+
+      updateTabsetPanel(
+        session,
+        "analysis_tabs",
+        selected = "overview"
+      )
+
+    }
+
   }, ignoreInit = TRUE)
   
   # Selected paths for detailed view
@@ -362,6 +449,18 @@ server <- function(input, output, session) {
   
   # DEG
   deg_df <- reactive({ read_deg_table(celltype_files()$deg_tsv) })
+
+  current_deg_contrast <- reactive({
+    df <- deg_df()
+    if (is.null(df) || !"contrast" %in% names(df)) return(NULL)
+    contrasts <- sort(unique(df$contrast))
+    if (length(contrasts) == 0) return(NULL)
+    if (!is.null(input$contrast) && nzchar(input$contrast) && input$contrast %in% contrasts) {
+      input$contrast
+    } else {
+      contrasts[1]
+    }
+  })
   
   output$deg_info <- renderUI({
     files <- celltype_files()
@@ -375,10 +474,11 @@ server <- function(input, output, session) {
     if (is.null(df) || !"contrast" %in% names(df)) return(NULL)
     contrasts <- sort(unique(df$contrast))
     if (length(contrasts) == 0) return(NULL)
+    selected_contrast <- current_deg_contrast()
     
     div(class = "card-like",
       h4("Select Contrast"),
-      selectInput("contrast", "Choose contrast for analysis", choices = contrasts, selected = contrasts[1])
+      selectInput("contrast", "Choose contrast for analysis", choices = contrasts, selected = selected_contrast)
     )
   })
 
@@ -457,7 +557,12 @@ server <- function(input, output, session) {
         div(
           style = "display: flex; flex-direction: column; justify-content: center;",
           h5("Cell Count Distribution", style = "text-align: center; margin-bottom: 10px;"),
-          plotOutput("pseudobulk_density_plot", height = "300px")
+          plotOutput("pseudobulk_density_plot", height = "300px"),
+          downloadButton(
+            "download_pseudobulk_density",
+            "Download PNG",
+            class = "btn btn-outline-primary btn-sm"
+          )
         ),
         
         # Group 2 stats (right)
@@ -495,8 +600,9 @@ server <- function(input, output, session) {
   filtered_deg_df <- reactive({
     df <- deg_df()
     if (is.null(df)) return(NULL)
-    if ("contrast" %in% names(df) && !is.null(input$contrast) && nzchar(input$contrast)) {
-      df <- subset(df, contrast == input$contrast)
+    contrast_value <- current_deg_contrast()
+    if ("contrast" %in% names(df) && !is.null(contrast_value) && nzchar(contrast_value)) {
+      df <- subset(df, contrast == contrast_value)
     }
     df
   })
@@ -512,7 +618,11 @@ server <- function(input, output, session) {
   observe({
     df_deg <- deg_df()
     df_gsea <- gsea_df()
-    n_contrasts <- if (!is.null(df_deg) && "contrast" %in% names(df_deg)) length(unique(df_deg$contrast)) else 0
+    n_contrasts <- if (!is.null(df_deg) && "contrast" %in% names(df_deg)) {
+      max(0, length(unique(df_deg$contrast)))
+    } else {
+      0
+    }
     sig_genes <- if (!is.null(df_deg) && all(c("padj", "log2foldchange") %in% names(df_deg))) sum(df_deg$padj < PADJ_THRESH & abs(df_deg$log2foldchange) >= LFC_THRESH, na.rm = TRUE) else 0
     sig_paths <- if (!is.null(df_gsea) && "fdr" %in% names(df_gsea)) sum(df_gsea$fdr <= 0.25, na.rm = TRUE) else 0
     output$vb_contrasts <- renderText(format(n_contrasts, big.mark = ","))
@@ -551,14 +661,86 @@ server <- function(input, output, session) {
       ) +
       scale_x_continuous(labels = scales::comma_format())
   }, res = 110)
+
+  output$download_pseudobulk_density <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$contrast,
+        "_cell_count_distribution.png"
+      )
+    },
+    content = function(file) {
+      stats <- pseudobulk_stats_reactive()
+
+      plot_data <- data.frame(
+        group = c(
+          rep(stats$group1_name, length(stats$group1_n_cells_per_sample)),
+          rep(stats$group2_name, length(stats$group2_n_cells_per_sample))
+        ),
+        cells_per_sample = c(
+          stats$group1_n_cells_per_sample,
+          stats$group2_n_cells_per_sample
+        )
+      )
+
+      p <- ggplot(plot_data, aes(x = cells_per_sample, fill = group)) +
+        geom_density(alpha = 0.7) +
+        scale_fill_manual(values = c("#2E86AB", "#A23B72")) +
+        labs(
+          x = "Cells per Sample",
+          y = "Density",
+          fill = "Group"
+        ) +
+        theme_minimal() +
+        theme(
+          legend.position = "bottom",
+          legend.title = element_blank(),
+          panel.grid.minor = element_blank(),
+          text = element_text(size = 10)
+        ) +
+        scale_x_continuous(labels = scales::comma_format())
+
+      ggsave(file, p, width = 8, height = 5, dpi = 300)
+    }
+  )
   
   output$volcano_plot <- renderPlot({
     hl <- input$highlight_genes
     hl_col <- if (!is.null(input$highlight_color_name) && nzchar(input$highlight_color_name)) input$highlight_color_name else "#FFD166"
     sig_col <- if (!is.null(input$signif_color_name) && nzchar(input$signif_color_name)) input$signif_color_name else "#E4572E"
     topn <- if (!is.null(input$volcano_label_topn)) input$volcano_label_topn else 10
-    make_volcano(filtered_deg_df(), highlight_genes = hl, highlight_color = hl_col, signif_color = sig_col, label_top_n = topn)
+    make_volcano(filtered_deg_df(), highlight_genes = hl, highlight_color = hl_col, signif_color = sig_col, label_top_n = topn, contrast_name = input$contrast)
   }, res = 110)
+
+  output$download_volcano <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$contrast,
+        "_volcano.png"
+      )
+    },
+    content = function(file) {
+      hl <- input$highlight_genes
+      hl_col <- if (!is.null(input$highlight_color_name) && nzchar(input$highlight_color_name)) input$highlight_color_name else "#FFD166"
+      sig_col <- if (!is.null(input$signif_color_name) && nzchar(input$signif_color_name)) input$signif_color_name else "#E4572E"
+      topn <- if (!is.null(input$volcano_label_topn)) input$volcano_label_topn else 10
+
+      p <- make_volcano(
+        filtered_deg_df(),
+        highlight_genes = hl,
+        highlight_color = hl_col,
+        signif_color = sig_col,
+        label_top_n = topn,
+        contrast_name = input$contrast
+      )
+
+      ggsave(file, p, width = 10, height = 8, dpi = 300)
+    }
+  )
   
   output$deg_table <- renderDT({
     df <- filtered_deg_df()
@@ -573,6 +755,18 @@ server <- function(input, output, session) {
   
   # GSEA
   gsea_df <- reactive({ read_gsea_results(celltype_files()$gsea_csvs) })
+
+  current_gsea_contrast <- reactive({
+    df <- gsea_df()
+    if (is.null(df) || !"comparison" %in% names(df)) return(NULL)
+    comps <- sort(unique(df$comparison))
+    if (length(comps) == 0) return(NULL)
+    if (!is.null(input$gsea_contrast) && nzchar(input$gsea_contrast) && input$gsea_contrast %in% comps) {
+      input$gsea_contrast
+    } else {
+      comps[1]
+    }
+  })
   
   output$gsea_info <- renderUI({
     files <- celltype_files()
@@ -587,16 +781,289 @@ server <- function(input, output, session) {
     if (is.null(df) || !"comparison" %in% names(df)) return(NULL)
     comps <- sort(unique(df$comparison))
     if (length(comps) == 0) return(NULL)
-    selectInput("gsea_contrast", "Select comparison", choices = comps, selected = comps[1])
+    selected_comparison <- current_gsea_contrast()
+    selectInput("gsea_contrast", "Select comparison", choices = comps, selected = selected_comparison)
   })
   
   filtered_gsea_df <- reactive({
     df <- gsea_df()
     if (is.null(df)) return(NULL)
-    if ("comparison" %in% names(df) && !is.null(input$gsea_contrast) && nzchar(input$gsea_contrast)) {
-      df <- subset(df, comparison == input$gsea_contrast)
+    comparison_value <- current_gsea_contrast()
+    if ("comparison" %in% names(df) && !is.null(comparison_value) && nzchar(comparison_value)) {
+      df <- subset(df, comparison == comparison_value)
     }
     df
+  })
+
+  build_ai_snapshot_payload <- function() {
+
+    ov <- overview_data()
+    ct <- selected_celltype()
+    detail <- !is.null(ct) && nzchar(ct)
+
+    # ----------------------------------------------------------
+    # Global overview: all cell types, summary only
+    # ----------------------------------------------------------
+
+    all_celltypes <- lapply(names(ov), function(x) {
+      d <- ov[[x]]
+
+      list(
+        celltype = x,
+        major_class = if (!is.null(d$major_class)) d$major_class else NULL,
+        n_contrasts = length(d$contrasts),
+        total_sig_genes = as.integer(d$total_sig_genes),
+        total_sig_pathways = as.integer(d$total_sig_paths)
+      )
+    })
+
+    payload <- list(
+      schema_version = "1.0",
+      view = if (detail) "celltype_detail" else "overview",
+
+      metadata = list(
+        analysis = "Pseudobulk DESeq2 + Hallmark GSEA",
+        results_directory = input$result_dir,
+        selected_celltype = if (detail) ct else NULL,
+        de_contrast = if (detail) current_deg_contrast() else NULL,
+        gsea_comparison = if (detail) current_gsea_contrast() else NULL
+      ),
+
+      thresholds = list(
+        padj = PADJ_THRESH,
+        abs_log2fc = LFC_THRESH,
+        gsea_fdr = 0.25
+      ),
+
+      interpretation_notes = list(
+        "Positive log2FC = higher in first group of contrast.",
+        "Negative log2FC = higher in second group.",
+        "Positive NES = enrichment in first group.",
+        "Negative NES = enrichment in second group."
+      ),
+
+      global_overview = list(
+        n_celltypes = length(all_celltypes),
+        celltypes = all_celltypes
+      ),
+
+      selected_celltype_detail = NULL
+    )
+
+    if (!detail) return(payload)
+
+    # ----------------------------------------------------------
+    # Selected cell type: detailed data
+    # ----------------------------------------------------------
+
+    deg <- filtered_deg_df()
+    gsea <- filtered_gsea_df()
+    stats <- pseudobulk_stats_reactive()
+
+    deg_detail <- list()
+    gsea_detail <- list()
+    sample_info <- NULL
+
+    # Samples
+    if (!is.null(stats)) {
+      sample_info <- list(
+        group1 = list(
+          name = stats$group1_name,
+          n_samples = stats$group1_n_samples,
+          total_cells = sum(stats$group1_n_cells_per_sample, na.rm = TRUE),
+          median_cells_per_sample = median(stats$group1_n_cells_per_sample, na.rm = TRUE)
+        ),
+        group2 = list(
+          name = stats$group2_name,
+          n_samples = stats$group2_n_samples,
+          total_cells = sum(stats$group2_n_cells_per_sample, na.rm = TRUE),
+          median_cells_per_sample = median(stats$group2_n_cells_per_sample, na.rm = TRUE)
+        )
+      )
+    }
+
+    # DEG
+    if (!is.null(deg) && nrow(deg)) {
+      sig <- deg$padj < PADJ_THRESH & abs(deg$log2foldchange) >= LFC_THRESH
+      up <- sig & deg$log2foldchange >= LFC_THRESH
+      down <- sig & deg$log2foldchange <= -LFC_THRESH
+
+      cols <- intersect(
+        c("gene", "baseMean", "log2foldchange", "pvalue", "padj", "contrast"),
+        names(deg)
+      )
+
+      up_df <- deg[up, , drop = FALSE]
+      down_df <- deg[down, , drop = FALSE]
+
+      up_df <- head(up_df[order(up_df$padj, -up_df$log2foldchange), cols, drop = FALSE], 50)
+      down_df <- head(down_df[order(down_df$padj, down_df$log2foldchange), cols, drop = FALSE], 50)
+      top_df <- head(deg[order(deg$padj), cols, drop = FALSE], 100)
+
+      deg_detail <- list(
+        contrast = current_deg_contrast(),
+        summary = list(
+          genes_tested = nrow(deg),
+          significant_genes = sum(sig, na.rm = TRUE),
+          upregulated = sum(up, na.rm = TRUE),
+          downregulated = sum(down, na.rm = TRUE)
+        ),
+        top_up = records(up_df),
+        top_down = records(down_df),
+        top_by_padj = records(top_df),
+        highlighted_genes = input$highlight_genes
+      )
+    }
+
+    # GSEA
+    if (!is.null(gsea) && nrow(gsea)) {
+      cols <- intersect(
+        c("comparison", "pathway", "nes", "fdr", "pval", "size", "msigdb_url"),
+        names(gsea)
+      )
+
+      pos <- gsea[!is.na(gsea$nes) & gsea$nes > 0, , drop = FALSE]
+      neg <- gsea[!is.na(gsea$nes) & gsea$nes < 0, , drop = FALSE]
+
+      pos <- head(pos[order(-pos$nes, pos$fdr), cols, drop = FALSE], 25)
+      neg <- head(neg[order(neg$nes, neg$fdr), cols, drop = FALSE], 25)
+
+      selected_row <- NULL
+
+      if (
+        !is.null(input$gsea_pathway) &&
+        nzchar(input$gsea_pathway) &&
+        "pathway" %in% names(gsea)
+      ) {
+        selected_row <- gsea[gsea$pathway == input$gsea_pathway, cols, drop = FALSE]
+      }
+
+      gsea_detail <- list(
+        comparison = current_gsea_contrast(),
+        summary = list(
+          pathways_tested = if (HALLMARK_COUNT > 0) HALLMARK_COUNT else nrow(gsea),
+          significant_pathways = sum(gsea$fdr <= 0.25, na.rm = TRUE)
+        ),
+        top_positive_nes = records(pos),
+        top_negative_nes = records(neg),
+        selected_pathway = input$gsea_pathway,
+        selected_pathway_result = records(selected_row)
+      )
+    }
+
+    payload$selected_celltype_detail <- list(
+      celltype = ct,
+      sample_information = sample_info,
+      differential_expression = deg_detail,
+      gsea = gsea_detail,
+      display_state = list(
+        volcano_top_n = input$volcano_label_topn,
+        highlighted_genes = input$highlight_genes,
+        gsea_top_n = input$gsea_top_n,
+        selected_gsea_pathway = input$gsea_pathway
+      )
+    )
+
+    payload
+  }
+
+  observeEvent(input$create_ai_snapshot, {
+
+    req(input$result_dir)
+
+    tryCatch({
+
+      payload <- build_ai_snapshot_payload()
+      id <- save_ai_snapshot(payload)
+
+      url <- paste0("ai_snapshots/", id, ".json")
+
+      ai_snapshot_relative_url(url)
+
+      updateActionButton(
+        session,
+        "create_ai_snapshot",
+        label = "✓ Snapshot Created!"
+      )
+
+      showNotification(
+        "AI snapshot created successfully.",
+        type = "message"
+      )
+
+    }, error = function(e) {
+
+      message("AI snapshot error: ", conditionMessage(e))
+
+      showNotification(
+        paste("Could not create snapshot:", conditionMessage(e)),
+        type = "error"
+      )
+    })
+  })
+
+  output$ai_snapshot_link <- renderUI({
+
+    url <- ai_snapshot_relative_url()
+    if (is.null(url) || !nzchar(url)) return(NULL)
+    tagList(
+
+      tags$p(tags$b("Snapshot created:")),
+      tags$a(
+        "Open AI snapshot",
+        href = url,
+        target = "_blank"
+      ),
+
+      tags$br(),
+      tags$br(),
+
+      tags$input(
+        id = "ai_snapshot_url_field",
+        type = "text",
+        readonly = "readonly",
+        value = url,
+        class = "form-control ai-snapshot-url",
+        onclick = "this.select();"
+      ),
+
+      tags$br(),
+
+      tags$button(
+        "📋 Copy URL",
+        type = "button",
+        class = "btn btn-secondary",
+        onclick = HTML("
+          const field = document.getElementById('ai_snapshot_url_field');
+          if (!field) return;
+
+          field.focus();
+          field.select();
+          field.setSelectionRange(0, field.value.length);
+
+          const ok = document.execCommand('copy');
+          this.innerText = ok ? '✓ Copied!' : 'Select URL and press Ctrl+C';
+        ")
+      ),
+
+      tags$br(),
+      tags$br(),
+
+      tags$p(
+        class = "muted",
+        "Paste this URL into ChatGPT, Claude, Gemini or another LLM."
+      ),
+
+      tags$script(
+        HTML(sprintf("
+          (function() {
+            const field = document.getElementById('ai_snapshot_url_field');
+            if (!field) return;
+            field.value = new URL('%s', window.location.href).href;
+          })();
+        ", url))
+      )
+    )
   })
   
   output$gsea_doc <- renderUI({
@@ -619,6 +1086,28 @@ server <- function(input, output, session) {
     choices <- unique(df$pathway)
     selectInput("gsea_pathway", "Select pathway", choices = choices, selected = choices[1])
   })
+
+  observe({
+
+    input$result_dir
+    selected_celltype()
+
+    input$contrast
+    input$highlight_genes
+    input$volcano_label_topn
+
+    input$gsea_contrast
+    input$gsea_top_n
+    input$gsea_pathway
+
+    ai_snapshot_relative_url(NULL)
+
+    updateActionButton(
+      session,
+      "create_ai_snapshot",
+      label = "🔗 Create AI Snapshot"
+    )
+  })
   
   output$gsea_png <- renderUI({
     comp <- input$gsea_contrast
@@ -633,8 +1122,29 @@ server <- function(input, output, session) {
   
   output$gsea_plot <- renderPlot({
     topn <- if (!is.null(input$gsea_top_n)) input$gsea_top_n else 10
-    make_gsea_plot(filtered_gsea_df(), top_n = topn)
+    make_gsea_plot(filtered_gsea_df(), top_n = topn, comparison_name = input$gsea_contrast)
   }, res = 110)
+  output$download_gsea <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_",
+        input$gsea_contrast,
+        "_gsea.png"
+      )
+    },
+    content = function(file) {
+      topn <- if (!is.null(input$gsea_top_n)) input$gsea_top_n else 10
+
+      p <- make_gsea_plot(
+        filtered_gsea_df(),
+        top_n = topn,
+        comparison_name = input$gsea_contrast
+      )
+
+      ggsave(file, p, width = 10, height = 7, dpi = 300)
+    }
+  )
   
   output$gsea_table <- renderDT({
     df <- filtered_gsea_df()
@@ -747,7 +1257,7 @@ server <- function(input, output, session) {
     data <- overview_data()
     if (length(data) == 0) return("0")
     all_contrasts <- unique(unlist(lapply(data, function(x) x$contrasts)))
-    length(all_contrasts)
+    max(0, length(all_contrasts))
   })
   
   output$vb_total_sig_genes <- renderText({
@@ -787,12 +1297,35 @@ server <- function(input, output, session) {
     if (length(files$volcano_png) == 0) return(tags$em("No volcano.png found."))
     tags$img(src = base64enc::dataURI(file = files$volcano_png[1], mime = "image/png"), style = "max-width:100%; height:auto;")
   })
+
+  output$download_volcano_png <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub("/", "_", selected_celltype()),
+        "_static_volcano.png"
+      )
+    },
+    content = function(file) {
+      files <- celltype_files()
+
+      req(length(files$volcano_png) > 0)
+
+      file.copy(
+        files$volcano_png[1],
+        file,
+        overwrite = TRUE
+      )
+    },
+    contentType = "image/png"
+  )
   
   # Detailed panel
   output$detailed_panel <- renderUI({
-    if (is.null(input$result_dir) || !nzchar(input$result_dir) || !nzchar(selected_celltype())) {
+    
+    if (is.null(input$result_dir) || !nzchar(input$result_dir)) {
       return(NULL)
     }
+  
     
     tagList(
       div(class = "card-like",
@@ -810,9 +1343,14 @@ server <- function(input, output, session) {
       uiOutput("contrast_selector"),
       # Pseudobulk stats (uses the global contrast selection)
       uiOutput("pseudobulk_stats"),
-      tabsetPanel(type = "pills",
+      tabsetPanel(
+        id = "analysis_tabs",
+        type = "pills",
+        selected = "overview",
+
         tabPanel(
           title = "Overview",
+          value = "overview",
           div(class = "card-like",
             h4("DE contrasts"),
             DTOutput("deg_summary_table") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB")
@@ -824,6 +1362,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "DESeq2",
+          value = "deseq2",
           div(class = "card-like",
             h4("Differential expression"),
             uiOutput("deg_info"),
@@ -845,7 +1384,12 @@ server <- function(input, output, session) {
               )
             ),
             sliderInput("volcano_label_topn", "Label top N significant genes", min = 0, max = 50, value = 10, step = 1),
-            plotOutput("volcano_plot", height = "640px") %>% shinycssloaders::withSpinner(type = 7, color = "#E4572E")
+            plotOutput("volcano_plot", height = "640px") %>% shinycssloaders::withSpinner(type = 7, color = "#E4572E"),
+            downloadButton(
+              "download_volcano",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            )
           ),
           div(class = "card-like",
             h4("DE results table"),
@@ -854,6 +1398,7 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "GSEA",
+          value = "gsea",
           div(class = "card-like",
             h4("Enrichment (Hallmark)"),
             uiOutput("gsea_info"),
@@ -861,6 +1406,12 @@ server <- function(input, output, session) {
             sliderInput("gsea_top_n", "Top pathways to show", min = 5, max = 100, value = 10, step = 5),
             uiOutput("gsea_doc"),
             plotOutput("gsea_plot", height = "520px") %>% shinycssloaders::withSpinner(type = 7, color = "#2E86AB"),
+            downloadButton(
+              "download_gsea",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            ),
+
             uiOutput("gsea_pathway_selector"),
             div(style = "margin-top: 12px;",
               h5("Enrichment plot (PNG)"),
@@ -874,13 +1425,20 @@ server <- function(input, output, session) {
         ),
         tabPanel(
           title = "PNG Preview",
+          value = "png",
           div(class = "card-like",
             h4("Volcano (static PNG)"),
-            uiOutput("volcano_png_ui")
+            uiOutput("volcano_png_ui"),
+            downloadButton(
+              "download_volcano_png",
+              "Download PNG",
+              class = "btn btn-outline-primary btn-sm"
+            )
           )
         ),
         tabPanel(
           title = "Logs (advanced)",
+          value = "logs",
           div(class = "card-like",
             span(class = "muted", "Technical details for troubleshooting; not needed for normal use."),
             h4("Latest DESeq2 log"),
@@ -894,4 +1452,8 @@ server <- function(input, output, session) {
       )
     )
   })
+  # Keep the main dynamic UI outputs reactive even while currently empty/hidden
+  outputOptions(output, "detailed_panel", suspendWhenHidden = FALSE)
+  outputOptions(output, "overview_panel", suspendWhenHidden = FALSE)
+
 } 
