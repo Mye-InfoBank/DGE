@@ -2,8 +2,6 @@ server <- function(input, output, session) {
   # Use reactive value for selected cell type instead of hidden input
   selected_celltype <- reactiveVal("")
 
-  ai_snapshot_relative_url <- reactiveVal(NULL)
-
   #giving browser simple state what to show
   output$show_detail <- renderText({
     if (nzchar(selected_celltype())) "true" else "false"
@@ -818,7 +816,9 @@ server <- function(input, output, session) {
     })
 
     payload <- list(
-      schema_version = "1.0",
+      schema_version = "1.1",
+      created_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+      llm_context = ai_snapshot_llm_context(),
       view = if (detail) "celltype_detail" else "overview",
 
       metadata = list(
@@ -967,105 +967,26 @@ server <- function(input, output, session) {
     payload
   }
 
-  observeEvent(input$create_ai_snapshot, {
-
-    req(input$result_dir)
-
-    tryCatch({
-
-      payload <- build_ai_snapshot_payload()
-      id <- save_ai_snapshot(payload)
-
-      url <- paste0("ai_snapshots/", id, ".json")
-
-      ai_snapshot_relative_url(url)
-
-      updateActionButton(
-        session,
-        "create_ai_snapshot",
-        label = "✓ Snapshot Created!"
+  output$download_ai_snapshot <- downloadHandler(
+    filename = function() {
+      ct <- selected_celltype()
+      part <- if (!is.null(ct) && nzchar(ct)) gsub("[^A-Za-z0-9]+", "_", ct) else "overview"
+      paste0("ai_snapshot_", part, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".json")
+    },
+    contentType = "application/json",
+    content = function(file) {
+      jsonlite::write_json(
+        build_ai_snapshot_payload(),
+        file,
+        auto_unbox = TRUE,
+        pretty = TRUE,
+        na = "null",
+        null = "null",
+        digits = 10
       )
+    }
+  )
 
-      showNotification(
-        "AI snapshot created successfully.",
-        type = "message"
-      )
-
-    }, error = function(e) {
-
-      message("AI snapshot error: ", conditionMessage(e))
-
-      showNotification(
-        paste("Could not create snapshot:", conditionMessage(e)),
-        type = "error"
-      )
-    })
-  })
-
-  output$ai_snapshot_link <- renderUI({
-
-    url <- ai_snapshot_relative_url()
-    if (is.null(url) || !nzchar(url)) return(NULL)
-    tagList(
-
-      tags$p(tags$b("Snapshot created:")),
-      tags$a(
-        "Open AI snapshot",
-        href = url,
-        target = "_blank"
-      ),
-
-      tags$br(),
-      tags$br(),
-
-      tags$input(
-        id = "ai_snapshot_url_field",
-        type = "text",
-        readonly = "readonly",
-        value = url,
-        class = "form-control ai-snapshot-url",
-        onclick = "this.select();"
-      ),
-
-      tags$br(),
-
-      tags$button(
-        "📋 Copy URL",
-        type = "button",
-        class = "btn btn-secondary",
-        onclick = HTML("
-          const field = document.getElementById('ai_snapshot_url_field');
-          if (!field) return;
-
-          field.focus();
-          field.select();
-          field.setSelectionRange(0, field.value.length);
-
-          const ok = document.execCommand('copy');
-          this.innerText = ok ? '✓ Copied!' : 'Select URL and press Ctrl+C';
-        ")
-      ),
-
-      tags$br(),
-      tags$br(),
-
-      tags$p(
-        class = "muted",
-        "Paste this URL into ChatGPT, Claude, Gemini or another LLM."
-      ),
-
-      tags$script(
-        HTML(sprintf("
-          (function() {
-            const field = document.getElementById('ai_snapshot_url_field');
-            if (!field) return;
-            field.value = new URL('%s', window.location.href).href;
-          })();
-        ", url))
-      )
-    )
-  })
-  
   output$gsea_doc <- renderUI({
     ct <- selected_celltype()
     comp <- input$gsea_contrast
@@ -1087,28 +1008,6 @@ server <- function(input, output, session) {
     selectInput("gsea_pathway", "Select pathway", choices = choices, selected = choices[1])
   })
 
-  observe({
-
-    input$result_dir
-    selected_celltype()
-
-    input$contrast
-    input$highlight_genes
-    input$volcano_label_topn
-
-    input$gsea_contrast
-    input$gsea_top_n
-    input$gsea_pathway
-
-    ai_snapshot_relative_url(NULL)
-
-    updateActionButton(
-      session,
-      "create_ai_snapshot",
-      label = "🔗 Create AI Snapshot"
-    )
-  })
-  
   output$gsea_png <- renderUI({
     comp <- input$gsea_contrast
     pwy <- input$gsea_pathway

@@ -55,9 +55,8 @@ ui <- page_fluid(
       div(
         class = "card-like",
         h4("AI Analysis"),
-        tags$p(class = "muted", "Create a machine-readable snapshot for ChatGPT, Claude, Gemini or another LLM."),
-        actionButton("create_ai_snapshot", "🔗 Create AI Snapshot", class = "btn btn-primary"),
-        div(style = "margin-top:10px;", uiOutput("ai_snapshot_link"))
+        tags$p(class = "muted", "Download a machine-readable snapshot of the current view, then upload the file to ChatGPT, Claude, Gemini or another LLM and ask your question."),
+        downloadButton("download_ai_snapshot", "Download AI Snapshot", class = "btn btn-primary")
       )
     ),
     div(

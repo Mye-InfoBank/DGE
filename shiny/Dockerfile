@@ -51,7 +51,6 @@ RUN Rscript /tmp/install_packages.R && Rscript -e "library(shiny); cat('shiny OK
 #COPY global.R /app/
 #COPY ui.R /app/
 #COPY server.R /app/
-#COPY ai_snapshots /app/ai_snapshots/
 # Copy all R files used by the app
 COPY *.R /app/
 
