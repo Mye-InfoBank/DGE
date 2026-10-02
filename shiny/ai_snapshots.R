@@ -14,6 +14,83 @@ records <- function(df) {
   unname(split(df, seq_len(nrow(df))))
 }
 
+# Samples / cells per group of a contrast, from the pseudobulk metadata of one cell type.
+# Returns NULL if the groups cannot be identified. Contrast format: "A_vs_B" or "A_vs_rest".
+pseudobulk_group_stats <- function(meta, params_df, contrast) {
+  if (is.null(meta) || is.null(params_df) || is.null(contrast) || !nzchar(contrast)) return(NULL)
+
+  groups <- strsplit(contrast, "_vs_")[[1]]
+  group1 <- groups[1]
+  group2 <- groups[2]
+
+  condition_col <- params_df$category_column
+  if (is.null(condition_col) || !condition_col %in% names(meta)) return(NULL)
+
+  if (isTRUE(as.logical(params_df$one_vs_all))) {
+    group1_samples <- meta[meta[[condition_col]] == group1, ]
+    group2_samples <- meta[meta[[condition_col]] != group1, ]
+  } else {
+    group1_samples <- meta[meta[[condition_col]] == group1, ]
+    group2_samples <- meta[meta[[condition_col]] == group2, ]
+  }
+
+  if (nrow(group1_samples) == 0 || nrow(group2_samples) == 0) return(NULL)
+
+  list(
+    group1_name = group1,
+    group2_name = group2,
+    group1_n_samples = nrow(group1_samples),
+    group2_n_samples = nrow(group2_samples),
+    group1_n_cells_per_sample = group1_samples$ncells,
+    group2_n_cells_per_sample = group2_samples$ncells
+  )
+}
+
+# Compact JSON representation of pseudobulk_group_stats()
+summarise_group_stats <- function(stats) {
+  if (is.null(stats)) return(NULL)
+
+  grp <- function(name, ncells) list(
+    name = name,
+    n_samples = length(ncells),
+    total_cells = sum(ncells, na.rm = TRUE),
+    median_cells_per_sample = median(ncells, na.rm = TRUE)
+  )
+
+  list(
+    group1 = grp(stats$group1_name, stats$group1_n_cells_per_sample),
+    group2 = grp(stats$group2_name, stats$group2_n_cells_per_sample)
+  )
+}
+
+# Per contrast: name, sample sizes of both groups and number of significant genes
+celltype_contrast_overview <- function(ct_dir, contrasts, sig_genes) {
+  if (!length(contrasts)) return(list())
+
+  meta_file <- file.path(ct_dir, "DESeq2_pseudobulk_metadata.txt")
+  params_file <- file.path(ct_dir, "DESeq2_run_parameters.tsv")
+
+  meta <- params <- NULL
+  if (!is.na(ct_dir) && file.exists(meta_file) && file.exists(params_file)) {
+    meta <- tryCatch(
+      read.table(meta_file, header = TRUE, sep = "\t", check.names = FALSE, quote = "", comment.char = ""),
+      error = function(e) NULL
+    )
+    params <- tryCatch(
+      read.table(params_file, header = TRUE, sep = "\t", check.names = FALSE),
+      error = function(e) NULL
+    )
+  }
+
+  lapply(contrasts, function(cn) {
+    out <- list(contrast = cn)
+    out$significant_genes <- if (cn %in% names(sig_genes)) as.integer(sig_genes[[cn]]) else NULL
+    sizes <- summarise_group_stats(pseudobulk_group_stats(meta, params, cn))
+    if (!is.null(sizes)) out <- c(out, sizes)
+    out
+  })
+}
+
 # Static context so an LLM can interpret the snapshot without further input
 ai_snapshot_llm_context <- function() {
   list(
@@ -70,6 +147,9 @@ ai_snapshot_llm_context <- function() {
       nes = "Normalised enrichment score (positive = enriched in first group).",
       fdr = "FDR-adjusted p-value of the GSEA result.",
       size = "Number of genes of the pathway present in the ranked list.",
+      contrasts = "global_overview.celltypes[].contrasts: every contrast available for that cell type, with number of significant genes and the group sizes below.",
+      group1_group2 = "name, n_samples (pseudobulk samples = biological replicates), total_cells and median_cells_per_sample of each side of a contrast. Small n_samples means low power and unstable estimates.",
+      gsea_comparisons = "global_overview.celltypes[].gsea_comparisons: GSEA comparisons per cell type with number of significant pathways.",
       significant_genes = "Genes with padj < thresholds$padj and |log2FC| >= thresholds$abs_log2fc.",
       significant_pathways = "Pathways with fdr <= thresholds$gsea_fdr (all exported pathways already have fdr < 0.05)."
     ),

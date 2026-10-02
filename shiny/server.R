@@ -40,46 +40,7 @@ server <- function(input, output, session) {
     meta <- pseudobulk_metadata()
     params_df <- celltype_params()
     
-    # Split contrast name to get groups (assuming format "A_vs_B" or "A_vs_rest")
-    groups <- strsplit(input$contrast, "_vs_")[[1]]
-    group1 <- groups[1]
-    group2 <- groups[2]
-    
-    # Initialize variables
-    group1_samples <- NULL
-    group2_samples <- NULL
-    
-    # For one-vs-all mode 
-    if (params_df$one_vs_all) {
-      condition_col <- params_df$category_column
-      meta$tmp2 <- ifelse(meta[[condition_col]] == group1, group1, 'rest')
-      group1_samples <- meta[meta$tmp2 == group1, ]
-      group2_samples <- meta[meta$tmp2 == "rest", ]
-      
-    } else {
-      # For pairwise mode - use the actual condition column from parameters
-      condition_col <- params_df$category_column
-      
-      if (!is.null(condition_col) && condition_col %in% names(meta)) {
-        group1_samples <- meta[meta[[condition_col]] == group1, ]
-        group2_samples <- meta[meta[[condition_col]] == group2, ]
-      }
-    }
-    
-    # If we couldn't identify groups, return NULL
-    if (is.null(group1_samples) || is.null(group2_samples) || 
-        nrow(group1_samples) == 0 || nrow(group2_samples) == 0) {
-      return(NULL)
-    }
-    
-    list(
-      group1_name = group1,
-      group2_name = group2,
-      group1_n_samples = nrow(group1_samples),
-      group2_n_samples = nrow(group2_samples),
-      group1_n_cells_per_sample = group1_samples$ncells,
-      group2_n_cells_per_sample = group2_samples$ncells
-    )
+    pseudobulk_group_stats(meta, params_df, input$contrast)
   })
   # Add a counter for cell type clicks to handle repeated clicks
   #celltype_click_counter <- reactiveVal(0)
@@ -806,17 +767,32 @@ server <- function(input, output, session) {
     all_celltypes <- lapply(names(ov), function(x) {
       d <- ov[[x]]
 
+      gsea_comparisons <- lapply(as.character(d$comparisons), function(cn) {
+        list(
+          comparison = cn,
+          significant_pathways = if (cn %in% names(d$sig_paths_by_comparison)) {
+            as.integer(d$sig_paths_by_comparison[[cn]])
+          } else NULL
+        )
+      })
+
       list(
         celltype = x,
         major_class = if (!is.null(d$major_class)) d$major_class else NULL,
         n_contrasts = length(d$contrasts),
         total_sig_genes = as.integer(d$total_sig_genes),
-        total_sig_pathways = as.integer(d$total_sig_paths)
+        total_sig_pathways = as.integer(d$total_sig_paths),
+        contrasts = celltype_contrast_overview(
+          resolve_celltype_dir(input$result_dir, x),
+          as.character(d$contrasts),
+          d$sig_genes_by_contrast
+        ),
+        gsea_comparisons = gsea_comparisons
       )
     })
 
     payload <- list(
-      schema_version = "1.1",
+      schema_version = "1.2",
       created_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
       llm_context = ai_snapshot_llm_context(),
       view = if (detail) "celltype_detail" else "overview",
@@ -858,29 +834,17 @@ server <- function(input, output, session) {
 
     deg <- filtered_deg_df()
     gsea <- filtered_gsea_df()
-    stats <- pseudobulk_stats_reactive()
+    # Computed directly (not via req()-guarded reactives) so a missing input cannot abort the download
+    stats <- tryCatch(
+      pseudobulk_group_stats(pseudobulk_metadata(), celltype_params(), current_deg_contrast()),
+      error = function(e) NULL
+    )
 
     deg_detail <- list()
     gsea_detail <- list()
-    sample_info <- NULL
 
-    # Samples
-    if (!is.null(stats)) {
-      sample_info <- list(
-        group1 = list(
-          name = stats$group1_name,
-          n_samples = stats$group1_n_samples,
-          total_cells = sum(stats$group1_n_cells_per_sample, na.rm = TRUE),
-          median_cells_per_sample = median(stats$group1_n_cells_per_sample, na.rm = TRUE)
-        ),
-        group2 = list(
-          name = stats$group2_name,
-          n_samples = stats$group2_n_samples,
-          total_cells = sum(stats$group2_n_cells_per_sample, na.rm = TRUE),
-          median_cells_per_sample = median(stats$group2_n_cells_per_sample, na.rm = TRUE)
-        )
-      )
-    }
+    # Samples of the selected contrast (all contrasts are in global_overview)
+    sample_info <- summarise_group_stats(stats)
 
     # DEG
     if (!is.null(deg) && nrow(deg)) {
@@ -953,6 +917,8 @@ server <- function(input, output, session) {
 
     payload$selected_celltype_detail <- list(
       celltype = ct,
+      available_contrasts = as.character(sort(unique(deg_df()$contrast))),
+      available_gsea_comparisons = as.character(ov[[ct]]$comparisons),
       sample_information = sample_info,
       differential_expression = deg_detail,
       gsea = gsea_detail,
