@@ -34,82 +34,100 @@ VOLCANO_COLORS <- c(
 
 # Major cell type mapping and palette
 MAJOR_CLASS_PALETTE <- c(
-  "T/NK/ILC" = "#1f77b4",
-  "B/Plasma" = "#2ca02c",
-  "Myeloid" = "#d62728",
-  "Epithelial" = "#ff7f0e",
-  "Endothelial" = "#9467bd",
-  "Stromal" = "#8c564b",
-  "Mast" = "#e377c2",
-  "Neuronal/Glia" = "#17becf",
-  "Other" = "#7f7f7f"
+  "T/NK/ILC"      = "#1f77b4",
+  "B/Plasma"      = "#2ca02c",
+  "Myeloid"       = "#d62728",
+  "Epithelial"    = "#ff7f0e",
+  "Stromal/Glial" = "#9467bd",
+  "Other"         = "#7f7f7f"
 )
+
 
 # Convert hex color to rgba string with alpha (0..1)
 color_alpha <- function(hex, alpha = 1) {
   h <- gsub("#", "", hex)
+
   if (nchar(h) == 3) {
-    h <- paste0(substr(h, 1, 1), substr(h, 1, 1), substr(h, 2, 2), substr(h, 2, 2), substr(h, 3, 3), substr(h, 3, 3))
+    h <- paste0(
+      substr(h, 1, 1), substr(h, 1, 1),
+      substr(h, 2, 2), substr(h, 2, 2),
+      substr(h, 3, 3), substr(h, 3, 3)
+    )
   }
+
   r <- strtoi(substr(h, 1, 2), base = 16)
   g <- strtoi(substr(h, 3, 4), base = 16)
   b <- strtoi(substr(h, 5, 6), base = 16)
-  sprintf("rgba(%d,%d,%d,%.3f)", r, g, b, max(0, min(1, alpha)))
+
+  sprintf(
+    "rgba(%d,%d,%d,%.3f)",
+    r, g, b,
+    max(0, min(1, alpha))
+  )
 }
 
+
 major_celltype_of <- function(name) {
+
   n <- tolower(name)
 
-  # Remove location prefix if present, e.g. "Colon/CD4" -> "CD4"
+  # Remove location prefix
   n <- sub("^(colon|ileum)/", "", n)
 
-  # T / NK / ILC lineage
-  if (grepl("\\bcd4\\b|\\bcd8\\b|\\btc\\b|tc effector|tc naive|\\bth\\b|th effector|th memory|th naive|th17|tfh|treg|t cells proliferating|nk cells|\\bilc\\b|ilc3", n)) {
+  # T / NK / ILC
+  if (grepl(
+    "cd4 t|cd8 t|gamma-delta|gdt|t cells cycling|t_cycling|tc_effector|tc_memory|th_effector|th_memory|th_naive|th17|tfh|treg|nk_ilc|nk ilc|nk cells|ilc",
+    n
+  )) {
     return("T/NK/ILC")
   }
 
-  # B / plasma lineage
-  if (grepl("b cell|plasma cell|plasma cell cycling|b cell cycling|b cell germinal center|b cell memory|b cell naive", n)) {
+  # B / Plasma
+  if (grepl(
+    "b cells|b_cell|plasma cells|plasma_cell",
+    n
+  )) {
     return("B/Plasma")
   }
 
-  # Mast cells as separate class
-  if (grepl("mast", n)) {
-    return("Mast")
-  }
-
-  # Myeloid lineage
-  if (grepl("monocyte|monocytes|macrophage|macrophages|neutrophil|neutrophils|eosinophil|eosinophils|cdc1|cdc2|cdc migratory|\\bpdc\\b|dendritic|platelet|platelets", n)) {
+  # Myeloid
+  if (grepl(
+    "monocyte|monocytes|macrophage|macrophages|neutrophil|neutrophils|eosinophil|eosinophils|cdc1|cdc2|cdc_migratory|cdc migratory|pdc|dendritic|mast|granulocyte|granulocytes|platelet|platelets",
+    n
+  )) {
     return("Myeloid")
   }
 
-  # Epithelial lineage
-  if (grepl("colonocyte|colonocytes|enterocyte|enterocytes|goblet|tuft|paneth|stem cells|ta cells|epithelial", n)) {
+  # Epithelial
+  if (grepl(
+    "colonocyte|colonocytes|enterocyte|enterocytes|goblet|tuft|paneth|stem_cell|stem cell|ta_cell|ta cell|epithelial",
+    n
+  )) {
     return("Epithelial")
   }
 
-  # Endothelial lineage
-  if (grepl("endothelial|capillary endothelial|venous endothelial|lymphatic endothelial|vascular", n)) {
-    return("Endothelial")
-  }
-
-  # Stromal / mesenchymal lineage
-  if (grepl("fibroblast|fibroblasts|myofibroblast|myofibroblasts|pericyte|pericytes|smooth muscle|stromal|mesenchymal", n)) {
-    return("Stromal")
-  }
-
-  # Neuronal / glial lineage
-  if (grepl("glial|glia|neuronal|neuron|schwann", n)) {
-    return("Neuronal/Glia")
+  # Stromal / Glial
+  if (grepl(
+    "fibroblast|fibroblasts|myofibroblast|myofibroblasts|pericyte|pericytes|smooth muscle|smooth_muscle|stromal|mesenchymal|endothelial|vascular|capillary|venous|lymphatic|adipocyte|adipocytes|glial|glia|neuronal|neuron|enteric nervous|schwann",
+    n
+  )) {
+    return("Stromal/Glial")
   }
 
   return("Other")
 }
 
+
 color_for_major_celltype <- function(name) {
+
   cls <- major_celltype_of(name)
   col <- MAJOR_CLASS_PALETTE[[cls]]
-  if (is.null(col) || length(col) == 0) MAJOR_CLASS_PALETTE[["Other"]] else col
+
+  if (is.null(col) || length(col) == 0) {
+    MAJOR_CLASS_PALETTE[["Other"]]
+  } else {
+    col
+  }
 }
 
 # ---------------- Helpers ---------------- #
