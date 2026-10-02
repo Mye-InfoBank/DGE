@@ -23,38 +23,56 @@ ui <- page_fluid(
     .pseudobulk-stat { margin: 8px 0; }
     .pseudobulk-label { font-size: 12px; color: #6c757d; }
     .pseudobulk-value { font-size: 16px; font-weight: 600; }
+
+    .ai-snapshot-url { font-size: 0.85em; width: 100%; }
   '))),
   layout_sidebar(
     sidebar = sidebar(
       width = 320,
       h4("Controls"),
-      div(class = "card-like",
+
+      div(
+        class = "card-like",
         div(class = "sidebar-label", "Results directory"),
-        selectInput(
-          inputId = "result_dir",
-          label = NULL,
-          choices = list_result_dirs(),
-          selected = character(0),
-          multiple = FALSE
+        selectInput("result_dir", NULL, choices = list_result_dirs(), selected = character(0), multiple = FALSE),
+        div(style = "margin-top:8px;", actionButton("refresh", "Refresh list", class = "btn btn-primary")),
+        div(
+          style = "margin-top:8px; font-size:12px; color:#6c757d;",
+          HTML(paste0(
+            "Significance criteria: <code>padj < ", PADJ_THRESH,
+            "</code> and <code>|log2FC| >= ", LFC_THRESH, "</code>"
+          ))
         ),
-        div(style = "margin-top:8px;",
-          actionButton("refresh", "Refresh list", class = "btn btn-primary")
-        ),
-        div(style = "margin-top:8px; font-size:12px; color:#6c757d;",
-          HTML(paste0("Significance criteria: <code>padj < ", PADJ_THRESH, "</code> and <code>|log2FC| >= ", LFC_THRESH, "</code>"))
-        ),
-        if (HALLMARK_COUNT > 0) div(style = "margin-top:6px; font-size:12px; color:#6c757d;",
-          HTML(paste0("GSEA tests ", HALLMARK_COUNT, " Hallmark pathways (MSigDB H). ",
-                      "See ", '<a href="https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp#H" target="_blank">collection H</a>.'))
+        if (HALLMARK_COUNT > 0) div(
+          style = "margin-top:6px; font-size:12px; color:#6c757d;",
+          HTML(paste0(
+            "GSEA tests ", HALLMARK_COUNT,
+            " Hallmark pathways (MSigDB H). See ",
+            '<a href="https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp#H" target="_blank">collection H</a>.'
+          ))
         )
+      ),
+      div(
+        class = "card-like",
+        h4("AI Analysis"),
+        tags$p(class = "muted", "Create a machine-readable snapshot for ChatGPT, Claude, Gemini or another LLM."),
+        actionButton("create_ai_snapshot", "🔗 Create AI Snapshot", class = "btn btn-primary"),
+        div(style = "margin-top:10px;", uiOutput("ai_snapshot_link"))
       )
     ),
     div(
       # Step 1: Overview when result directory is selected but no cell type
       uiOutput("no_directory_panel"),
-      uiOutput("overview_panel"),
+
+      conditionalPanel(
+        condition = "output.show_detail === 'false'",
+        uiOutput("overview_panel")
+      ),
       # Step 2: Detailed view once a cell type has been selected
-      uiOutput("detailed_panel")
+      conditionalPanel(
+        condition = "output.show_detail === 'true'",
+        uiOutput("detailed_panel")
+      )
     )
   )
 ) 

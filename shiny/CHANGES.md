@@ -3,15 +3,17 @@
 ## Support for Nested Directory Structures
 
 ### Summary
-Modified the Shiny app to handle both flat and nested directory structures when reading DEA results.
+Modified the Shiny app to handle both flat and nested directory structures when reading DEA results, and improved volcano plot labeling.
 
 ### Changes Made
 
 #### 1. `global.R` - Updated `list_celltype_dirs()` function
 - **Previous behavior**: Only looked for directories directly under the result folder
 - **New behavior**: 
-  - Detects if directories contain DESeq2 result files (TSV files)
-  - If a directory doesn't contain results directly, checks subdirectories
+  - Prioritizes nested structure detection
+  - First checks if directories have subdirectories with DESeq2 results
+  - If nested cell types are found, uses them instead of the parent directory
+  - Falls back to flat structure if no nesting is detected
   - Returns paths like "Subfolder/CellType" for nested structures
   - Maintains backward compatibility with flat structures
 
@@ -20,12 +22,30 @@ Modified the Shiny app to handle both flat and nested directory structures when 
 - Uses basename of cell type for classification (e.g., "B cell" from "Colon/B cell")
 - Displays full path for user interface
 
-#### 3. `server.R` - Updated file path resolution
+#### 3. `global.R` - Enhanced `make_volcano()` function
+- Added `contrast_name` parameter to display group information
+- Parses contrast name (e.g., "Inflamed_vs_Non-inflamed") to show:
+  - Title: "Volcano Plot: Inflamed vs Non-inflamed"
+  - X-axis label: "log2 fold change (Non-inflamed ← | → Inflamed)"
+- Makes it clear that positive log2FC means higher in the first group (left side of "A_vs_B")
+- Negative log2FC means higher in the second group (right side)
+
+#### 4. `global.R` - Enhanced `make_gsea_plot()` function
+- Added `comparison_name` parameter to display group enrichment information
+- Parses comparison name (e.g., "Inflamed_vs_Non-inflamed") to show:
+  - X-axis label: "NES (Non-inflamed ← | → Inflamed)"
+- Makes it clear that:
+  - Positive NES (right side) means pathway enriched in first group (Inflamed)
+  - Negative NES (left side) means pathway enriched in second group (Non-inflamed)
+
+#### 5. `server.R` - Updated file path resolution
 - Changed `pseudobulk_metadata()` to use `selected_celltype_path()` instead of manually constructing paths
 - Changed `celltype_params()` to use `selected_celltype_path()` instead of manually constructing paths
 - Ensures consistent path handling throughout the application
+- Added JavaScript escaping for cell type names with special characters
+- Passes contrast/comparison names to volcano and GSEA plots for proper labeling
 
-#### 4. `README.md` - Documentation
+#### 6. `README.md` - Documentation
 - Added section explaining supported directory structures
 - Documented both flat and nested patterns
 - Provided examples of each structure
