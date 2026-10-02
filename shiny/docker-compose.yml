@@ -3,6 +3,7 @@ version: '3.8'
 services:
   dea-shiny-app:
     build: .
+    image: bigdatainbiomedicine/dge-shiny:latest
     container_name: dea-shiny-app
     ports:
       - "3900:3838"

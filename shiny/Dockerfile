@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     pkg-config \
     git \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Add R repository and install R (modern GPG key method)
@@ -54,8 +55,6 @@ RUN Rscript /tmp/install_packages.R && Rscript -e "library(shiny); cat('shiny OK
 # Copy all R files used by the app
 COPY *.R /app/
 
-# Copy snapshot directory
-COPY ai_snapshots /app/ai_snapshots/
 
 RUN mkdir -p /data && chown -R root:root /app
 
